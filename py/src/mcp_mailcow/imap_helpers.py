@@ -20,7 +20,7 @@ from .config import UserConfig
 @contextmanager
 def imap_session(config: UserConfig) -> Iterator[IMAPClient]:
     client = IMAPClient(
-        host=config.host,
+        host=config.imap_host or config.host,
         port=config.imap_port,
         ssl=True,
         ssl_context=None if config.tls_verify else _insecure_context(),

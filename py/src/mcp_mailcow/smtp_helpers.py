@@ -65,12 +65,13 @@ def send_via_submission(config: UserConfig, msg: EmailMessage) -> str:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
 
+    smtp_host = config.smtp_host or config.host
     if config.smtp_port == 465:
-        with smtplib.SMTP_SSL(config.host, config.smtp_port, context=ctx, timeout=30) as s:
+        with smtplib.SMTP_SSL(smtp_host, config.smtp_port, context=ctx, timeout=30) as s:
             s.login(config.mail_user, config.mail_pass)
             s.send_message(msg)
     else:
-        with smtplib.SMTP(config.host, config.smtp_port, timeout=30) as s:
+        with smtplib.SMTP(smtp_host, config.smtp_port, timeout=30) as s:
             s.starttls(context=ctx)
             s.login(config.mail_user, config.mail_pass)
             s.send_message(msg)

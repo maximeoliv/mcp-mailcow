@@ -9,6 +9,10 @@ export interface UserConfig {
   host: string;
   mailUser: string;
   mailPass: string;
+  /** IMAP host — defaults to `host` if not set explicitly. */
+  imapHost: string;
+  /** SMTP host — defaults to `host` if not set explicitly. */
+  smtpHost: string;
   imapPort: number;
   smtpPort: number;
   tlsVerify: boolean;
@@ -44,10 +48,13 @@ function boolEnv(name: string, def: boolean): boolean {
 }
 
 export function loadUserConfig(): UserConfig {
+  const host = require_("MAILCOW_HOST");
   return {
-    host: require_("MAILCOW_HOST"),
+    host,
     mailUser: require_("MAILCOW_MAIL_USER"),
     mailPass: require_("MAILCOW_MAIL_PASS"),
+    imapHost: process.env.MAILCOW_IMAP_HOST || host,
+    smtpHost: process.env.MAILCOW_SMTP_HOST || host,
     imapPort: Number.parseInt(process.env.MAILCOW_IMAP_PORT || "993", 10),
     smtpPort: Number.parseInt(process.env.MAILCOW_SMTP_PORT || "587", 10),
     tlsVerify: boolEnv("MCP_MAILCOW_TLS_VERIFY", true),

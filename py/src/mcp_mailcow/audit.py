@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -51,7 +52,7 @@ class AuditLogger:
         error: str | None = None,
     ) -> None:
         entry = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "ts": datetime.now(timezone.utc).isoformat(),
             "action": action,
             "params": _mask_secrets(params),
             "result": result,

@@ -14,6 +14,7 @@ from typing import Any
 
 from .audit import AuditLogger
 from .config import UserConfig
+from .exceptions import ConfirmationRequired
 from .imap_helpers import imap_session, parse_full_message, parse_message_summary
 from .smtp_helpers import build_message, send_via_submission
 
@@ -230,7 +231,7 @@ def rename_folder(ctx: UserContext) -> ToolHandler:
 def delete_folder(ctx: UserContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         if not args.get("confirm"):
-            raise ValueError("delete_folder requires confirm=true")
+            raise ConfirmationRequired("delete_folder requires confirm=true")
         with ctx.audit.trace("delete_folder", args):
             with imap_session(ctx.config) as imap:
                 imap.delete_folder(args["name"])
@@ -241,7 +242,7 @@ def delete_folder(ctx: UserContext) -> ToolHandler:
 def empty_folder(ctx: UserContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         if not args.get("confirm"):
-            raise ValueError("empty_folder requires confirm=true")
+            raise ConfirmationRequired("empty_folder requires confirm=true")
         with ctx.audit.trace("empty_folder", args):
             with imap_session(ctx.config) as imap:
                 imap.select_folder(args["folder"])

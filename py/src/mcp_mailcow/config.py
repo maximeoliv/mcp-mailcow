@@ -18,11 +18,18 @@ DEFAULT_AUDIT_LOG = Path(user_state_dir("mcp-mailcow")) / "audit.log"
 
 @dataclass(frozen=True)
 class UserConfig:
-    """Config for user mode (IMAP/SMTP)."""
+    """Config for user mode (IMAP/SMTP).
+
+    `imap_host` and `smtp_host` default to `host` when not set explicitly.
+    Override them only if your IMAP and SMTP submission run on different
+    servers (rare — e.g. external SMTP relay in front of local IMAP).
+    """
 
     host: str
     mail_user: str
     mail_pass: str
+    imap_host: str = ""  # falls back to `host` in load_user_config
+    smtp_host: str = ""  # falls back to `host` in load_user_config
     imap_port: int = 993
     smtp_port: int = 587
     tls_verify: bool = True
@@ -60,10 +67,13 @@ def _path_env(var: str, default: Path) -> Path:
 
 
 def load_user_config() -> UserConfig:
+    host = _require("MAILCOW_HOST")
     return UserConfig(
-        host=_require("MAILCOW_HOST"),
+        host=host,
         mail_user=_require("MAILCOW_MAIL_USER"),
         mail_pass=_require("MAILCOW_MAIL_PASS"),
+        imap_host=os.environ.get("MAILCOW_IMAP_HOST") or host,
+        smtp_host=os.environ.get("MAILCOW_SMTP_HOST") or host,
         imap_port=int(os.environ.get("MAILCOW_IMAP_PORT", "993")),
         smtp_port=int(os.environ.get("MAILCOW_SMTP_PORT", "587")),
         tls_verify=_bool_env("MCP_MAILCOW_TLS_VERIFY", True),

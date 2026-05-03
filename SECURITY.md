@@ -80,6 +80,16 @@ failure, and duration. Review this log periodically.
    MCP. Consider running it behind a subprocess wrapper that monitors call
    frequency.
 
+4. **Concurrent audit log writes**: when both the user-mode and admin-mode
+   MCPs run side-by-side and write to the same audit log file, individual
+   JSONL entries < 4 KB are atomic on Linux (POSIX `PIPE_BUF` guarantee).
+   Larger entries (e.g. tool params containing large binary attachments
+   encoded in base64) may interleave between processes. JSONL parsers
+   should tolerate occasional malformed lines; if you need stricter
+   guarantees, set `MCP_MAILCOW_AUDIT_LOG` to different paths per mode or
+   wrap with `flock()` (currently not enabled by default to avoid sync
+   overhead).
+
 ## Out of scope
 
 The following are not security concerns of this project:

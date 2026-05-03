@@ -11,6 +11,7 @@
  */
 import type { AdminConfig } from "../config.js";
 import type { AuditLogger } from "../audit.js";
+import { ConfirmationRequired } from "../exceptions.js";
 import { MailcowClient } from "./api.js";
 
 type Args = Record<string, unknown>;
@@ -39,7 +40,7 @@ const b = (v: unknown): number => (v ? 1 : 0);
 
 function requireConfirm(args: Args, op: string): void {
   if (!args.confirm) {
-    throw new Error(`${op} requires confirm=true`);
+    throw new ConfirmationRequired(`${op} requires confirm=true`);
   }
 }
 

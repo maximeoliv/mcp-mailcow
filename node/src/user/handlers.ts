@@ -5,6 +5,7 @@
  */
 import type { UserConfig } from "../config.js";
 import type { AuditLogger } from "../audit.js";
+import { ConfirmationRequired } from "../exceptions.js";
 import { withImapSession, formatAddress, formatAddresses } from "./imap_helpers.js";
 import { sendViaSubmission } from "./smtp_helpers.js";
 
@@ -243,7 +244,7 @@ export const rename_folder = (ctx: UserContext): Handler => async (args) =>
   );
 
 export const delete_folder = (ctx: UserContext): Handler => async (args) => {
-  if (!args.confirm) throw new Error("delete_folder requires confirm=true");
+  if (!args.confirm) throw new ConfirmationRequired("delete_folder requires confirm=true");
   return ctx.audit.trace("delete_folder", args, async () =>
     withImapSession(ctx.config, async (imap) => {
       await imap.mailboxDelete(args.name as string);
@@ -253,7 +254,7 @@ export const delete_folder = (ctx: UserContext): Handler => async (args) => {
 };
 
 export const empty_folder = (ctx: UserContext): Handler => async (args) => {
-  if (!args.confirm) throw new Error("empty_folder requires confirm=true");
+  if (!args.confirm) throw new ConfirmationRequired("empty_folder requires confirm=true");
   return ctx.audit.trace("empty_folder", args, async () =>
     withImapSession(ctx.config, async (imap) => {
       const folder = args.folder as string;

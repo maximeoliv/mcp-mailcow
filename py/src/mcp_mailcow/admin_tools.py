@@ -12,6 +12,7 @@ from typing import Any
 
 from .audit import AuditLogger
 from .config import AdminConfig
+from .exceptions import ConfirmationRequired
 from .mailcow_api import MailcowClient
 
 ToolHandler = Callable[[dict[str, Any]], Awaitable[Any]]
@@ -37,7 +38,7 @@ def _b(v: Any) -> int:
 
 def _require_confirm(args: dict[str, Any], op: str) -> None:
     if not args.get("confirm"):
-        raise ValueError(f"{op} requires confirm=true")
+        raise ConfirmationRequired(f"{op} requires confirm=true")
 
 
 # =============================================================================

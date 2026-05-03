@@ -10,7 +10,7 @@ export async function withImapSession<T>(
   fn: (client: ImapFlow) => Promise<T>,
 ): Promise<T> {
   const client = new ImapFlow({
-    host: config.host,
+    host: config.imapHost || config.host,
     port: config.imapPort,
     secure: true,
     auth: { user: config.mailUser, pass: config.mailPass },

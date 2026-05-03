@@ -1,15 +1,13 @@
 /**
  * MCP server entry. Loads the schema, builds the registry for the requested
  * mode, and exposes it over stdio.
- *
- * NOTE: TypeScript implementation is currently a SKELETON. Tool handlers are
- * stubs. The Python implementation is the reference until this is filled in.
  */
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadSchema, toolsForMode, toMcpTool } from "./schema.js";
 import { loadAdminConfig, loadUserConfig } from "./config.js";
 import { AuditLogger } from "./audit.js";
+import { ConfirmationRequired } from "./exceptions.js";
 import { buildAdminRegistry } from "./admin/registry.js";
 import { buildUserRegistry } from "./user/registry.js";
 
@@ -55,6 +53,16 @@ export async function runServer(mode: "user" | "admin"): Promise<void> {
           typeof result === "string" ? result : JSON.stringify(result, null, 2);
         return { content: [{ type: "text", text }] };
       } catch (err) {
+        if (err instanceof ConfirmationRequired) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `⚠ ${err.message}\nAdd \`confirm: true\` to the arguments and retry.`,
+              },
+            ],
+          };
+        }
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [{ type: "text", text: `error: ${msg}` }] };
       }

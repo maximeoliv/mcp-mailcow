@@ -27,7 +27,7 @@ export async function sendViaSubmission(
   opts: SendOptions,
 ): Promise<string> {
   const transporter = nodemailer.createTransport({
-    host: config.host,
+    host: config.smtpHost || config.host,
     port: config.smtpPort,
     secure: config.smtpPort === 465,
     auth: { user: config.mailUser, pass: config.mailPass },

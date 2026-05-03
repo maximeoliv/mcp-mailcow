@@ -6,6 +6,7 @@ MCP stdio transport from the official `mcp` SDK.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -15,6 +16,7 @@ from mcp.types import TextContent, Tool
 
 from .audit import AuditLogger
 from .config import load_admin_config, load_user_config
+from .exceptions import ConfirmationRequired
 from .schema import load_schema, to_mcp_tool, tools_for_mode
 
 logger = logging.getLogger("mcp_mailcow")
@@ -52,13 +54,21 @@ async def run_server(mode: str) -> None:
         handler = registry[name]
         try:
             result = await handler(arguments)
+        except ConfirmationRequired as e:
+            return [
+                TextContent(
+                    type="text",
+                    text=f"⚠ {e}\nAdd `confirm: true` to the arguments and retry.",
+                )
+            ]
         except Exception as e:  # surface as text error, don't crash the server
             logger.exception("tool %s failed", name)
             return [TextContent(type="text", text=f"error: {e}")]
-        # Always serialize to text/JSON for MCP transport
-        import json
-
-        text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, indent=2)
+        text = (
+            result
+            if isinstance(result, str)
+            else json.dumps(result, ensure_ascii=False, indent=2)
+        )
         return [TextContent(type="text", text=text)]
 
     async with stdio_server() as (read_stream, write_stream):
