@@ -35,3 +35,15 @@ Thumbs.db
 # Audit logs / temp
 audit.log
 *.tmp
+
+# Tailscale Taildrop messages (when received in this directory by mistake)
+ack-*.md
+reply-*.md
+rapport-*.md
+brief-*.md
+ask-*.md
+notif-*.md
+demande-*.md
+forward-*.md
+broadcast-*.md
+request-*.md
