@@ -1,0 +1,1245 @@
+# MCP Mailcow — Source of truth for tool definitions
+# Both Python and Node/TypeScript implementations read this schema at build time.
+#
+# Modes:
+#   - user  : operates on a single user's mailbox via IMAP/SMTP
+#   - admin : operates on the Mailcow server via REST API
+#
+# Goal: complete coverage of useful Mailcow operations + IMAP/SMTP user actions.
+# Mirrors the official Mailcow OpenAPI spec (96 operations).
+
+version: "1.0"
+
+modes:
+  user:
+    description: |
+      User-level mailbox operations via IMAP (read) and SMTP submission (send).
+      Required env vars:
+        - MAILCOW_HOST          : hostname (e.g. mail.example.com)
+        - MAILCOW_MAIL_USER     : full email address
+        - MAILCOW_MAIL_PASS     : app password (recommended, scoped IMAP+SMTP)
+      Optional:
+        - MAILCOW_IMAP_PORT     : default 993
+        - MAILCOW_SMTP_PORT     : default 587
+
+  admin:
+    description: |
+      Admin operations via Mailcow REST API.
+      Required env vars:
+        - MAILCOW_ADMIN_URL     : base URL (e.g. https://mail.example.com)
+        - MAILCOW_ADMIN_API_KEY : API key from Mailcow admin UI
+
+# =============================================================================
+# USER MODE — IMAP/SMTP
+# =============================================================================
+
+tools:
+
+  # --- READING ---
+
+  - name: list_inbox
+    mode: user
+    category: mailbox.read
+    description: |
+      List messages in a folder (default INBOX), most recent first. Returns
+      metadata (uid, from, to, subject, date, size, flags, has_attachments) but
+      not the body. Use read_message to fetch a specific message body.
+    params:
+      folder: { type: string, default: INBOX }
+      limit: { type: integer, default: 20, max: 200 }
+      since: { type: string, format: date, required: false, description: "ISO 8601 YYYY-MM-DD" }
+      unread_only: { type: boolean, default: false }
+
+  - name: read_message
+    mode: user
+    category: mailbox.read
+    description: |
+      Fetch the full content of a message: headers, plain/html body, attachment
+      metadata. Attachments are not downloaded (use download_attachment).
+    params:
+      uid: { type: integer, required: true }
+      folder: { type: string, default: INBOX }
+      fetch_html: { type: boolean, default: false }
+      mark_read:
+        type: boolean
+        default: false
+        description: If true, sets the \Seen flag after reading
+
+  - name: get_message_raw
+    mode: user
+    category: mailbox.read
+    description: |
+      Get the raw RFC822 source of a message (full source with headers).
+      Useful for debugging deliverability or forwarding as-is.
+    params:
+      uid: { type: integer, required: true }
+      folder: { type: string, default: INBOX }
+
+  - name: search_messages
+    mode: user
+    category: mailbox.read
+    description: |
+      Server-side search via IMAP SEARCH. Supports criteria like FROM, TO,
+      SUBJECT, BODY, SINCE, BEFORE, UNSEEN, FLAGGED, LARGER, SMALLER.
+      Examples:
+        'SUBJECT "invoice"'
+        'FROM alice@example.com SINCE 1-Jan-2026'
+        'BODY "claude" UNSEEN'
+        'LARGER 10000000'
+    params:
+      query: { type: string, required: true }
+      folder: { type: string, default: INBOX }
+      limit: { type: integer, default: 50 }
+
+  - name: get_unread_count
+    mode: user
+    category: mailbox.read
+    description: Get the count of unread messages per folder (or just one if specified).
+    params:
+      folder:
+        type: string
+        required: false
+        description: If omitted, returns counts for all folders
+
+  - name: download_attachment
+    mode: user
+    category: mailbox.read
+    description: |
+      Download an attachment from a message. Returns base64-encoded bytes,
+      filename, and MIME type.
+    params:
+      uid: { type: integer, required: true }
+      folder: { type: string, default: INBOX }
+      part_id: { type: string, required: true }
+      max_size_mb: { type: integer, default: 25 }
+
+  # --- FOLDERS ---
+
+  - name: list_folders
+    mode: user
+    category: mailbox.folders
+    description: List all IMAP folders/mailboxes available to the user.
+    params: {}
+
+  - name: create_folder
+    mode: user
+    category: mailbox.folders
+    description: Create a new IMAP folder.
+    params:
+      name: { type: string, required: true, description: "Folder name (e.g. 'Archive/2026' for nested)" }
+
+  - name: rename_folder
+    mode: user
+    category: mailbox.folders
+    description: Rename an existing folder.
+    params:
+      old_name: { type: string, required: true }
+      new_name: { type: string, required: true }
+
+  - name: delete_folder
+    mode: user
+    category: mailbox.folders
+    description: Delete a folder. Destructive — requires confirm=true.
+    params:
+      name: { type: string, required: true }
+      confirm: { type: boolean, required: true }
+
+  - name: empty_folder
+    mode: user
+    category: mailbox.folders
+    description: |
+      Empty all messages from a folder (typically Trash or Junk). Destructive —
+      requires confirm=true.
+    params:
+      folder: { type: string, required: true }
+      confirm: { type: boolean, required: true }
+
+  # --- SENDING ---
+
+  - name: send_message
+    mode: user
+    category: mailbox.send
+    description: |
+      Send an email via SMTP submission. From header set to MAILCOW_MAIL_USER.
+    params:
+      to: { type: array, items: {type: string}, required: true }
+      subject: { type: string, required: true }
+      body: { type: string, required: true, description: "Plain text body" }
+      body_html: { type: string, required: false }
+      cc: { type: array, items: {type: string}, required: false }
+      bcc: { type: array, items: {type: string}, required: false }
+      reply_to: { type: string, required: false }
+      in_reply_to: { type: string, required: false, description: "Message-ID being replied to" }
+      attachments:
+        type: array
+        items:
+          type: object
+          properties:
+            filename: { type: string }
+            content_b64: { type: string }
+            mime_type: { type: string }
+        required: false
+
+  - name: reply_to_message
+    mode: user
+    category: mailbox.send
+    description: |
+      Reply to a message. Auto-sets In-Reply-To and References headers.
+      Subject prefixed with "Re: ". Body can include the original quoted.
+    params:
+      uid: { type: integer, required: true }
+      folder: { type: string, default: INBOX }
+      body: { type: string, required: true }
+      reply_all: { type: boolean, default: false }
+      include_quoted: { type: boolean, default: true }
+
+  - name: forward_message
+    mode: user
+    category: mailbox.send
+    description: Forward a message to other recipients.
+    params:
+      uid: { type: integer, required: true }
+      folder: { type: string, default: INBOX }
+      to: { type: array, items: {type: string}, required: true }
+      body_prefix: { type: string, required: false, description: "Optional intro before forwarded content" }
+      include_attachments: { type: boolean, default: true }
+
+  - name: save_draft
+    mode: user
+    category: mailbox.send
+    description: |
+      Save a message as draft in the Drafts folder (without sending).
+      Returns the new UID.
+    params:
+      to: { type: array, items: {type: string}, required: false }
+      subject: { type: string, required: false }
+      body: { type: string, required: false }
+      cc: { type: array, items: {type: string}, required: false }
+
+  # --- MESSAGE FLAGS / MOVES ---
+
+  - name: mark_read
+    mode: user
+    category: mailbox.flags
+    description: Mark a message as read (\Seen flag).
+    params:
+      uid: { type: integer, required: true }
+      folder: { type: string, default: INBOX }
+
+  - name: mark_unread
+    mode: user
+    category: mailbox.flags
+    description: Mark a message as unread.
+    params:
+      uid: { type: integer, required: true }
+      folder: { type: string, default: INBOX }
+
+  - name: mark_flagged
+    mode: user
+    category: mailbox.flags
+    description: Toggle the \Flagged (star) flag.
+    params:
+      uid: { type: integer, required: true }
+      folder: { type: string, default: INBOX }
+      value: { type: boolean, default: true }
+
+  - name: set_custom_flag
+    mode: user
+    category: mailbox.flags
+    description: Set or clear a custom IMAP keyword/flag (e.g. $Important, $MailFlagBit0).
+    params:
+      uid: { type: integer, required: true }
+      folder: { type: string, default: INBOX }
+      flag: { type: string, required: true }
+      value: { type: boolean, default: true }
+
+  - name: move_message
+    mode: user
+    category: mailbox.flags
+    description: Move a message to another folder.
+    params:
+      uid: { type: integer, required: true }
+      source_folder: { type: string, default: INBOX }
+      dest_folder: { type: string, required: true }
+
+  - name: delete_message
+    mode: user
+    category: mailbox.flags
+    description: |
+      Delete a message. Defaults to moving to Trash. Use purge=true to
+      bypass Trash (EXPUNGE immediate, irreversible).
+    params:
+      uid: { type: integer, required: true }
+      folder: { type: string, default: INBOX }
+      purge: { type: boolean, default: false }
+
+# =============================================================================
+# ADMIN MODE — Mailcow REST API (categorized)
+# =============================================================================
+
+  # --- DOMAIN MANAGEMENT ---
+
+  - name: domain_list
+    mode: admin
+    category: domain
+    description: List all domains hosted on Mailcow.
+    params: {}
+
+  - name: domain_create
+    mode: admin
+    category: domain
+    description: |
+      Add a new domain to Mailcow. Note: DNS records (MX, SPF, DKIM, DMARC) must
+      be configured separately at the registrar — this tool does not touch DNS.
+    params:
+      domain: { type: string, required: true }
+      defquota_mb: { type: integer, default: 1024, description: "Default quota for new mailboxes" }
+      maxquota_mb: { type: integer, default: 10240, description: "Max quota allowed per mailbox" }
+      quota_mb: { type: integer, default: 10240, description: "Total domain quota" }
+      mailboxes: { type: integer, default: 50, description: "Max number of mailboxes" }
+      aliases: { type: integer, default: 100 }
+      relay_all_recipients: { type: boolean, default: false }
+      backupmx: { type: boolean, default: false }
+      active: { type: boolean, default: true }
+
+  - name: domain_update
+    mode: admin
+    category: domain
+    description: Update domain attributes (quota, mailbox limit, active, etc.).
+    params:
+      domain: { type: string, required: true }
+      defquota_mb: { type: integer, required: false }
+      maxquota_mb: { type: integer, required: false }
+      quota_mb: { type: integer, required: false }
+      mailboxes: { type: integer, required: false }
+      aliases: { type: integer, required: false }
+      active: { type: boolean, required: false }
+
+  - name: domain_delete
+    mode: admin
+    category: domain
+    description: |
+      Delete a domain. Destructive — also removes all its mailboxes and aliases.
+      Requires confirm=true.
+    params:
+      domain: { type: string, required: true }
+      confirm: { type: boolean, required: true }
+
+  - name: domain_set_footer
+    mode: admin
+    category: domain
+    description: Set or update a domain-wide email footer (HTML/text).
+    params:
+      domain: { type: string, required: true }
+      html: { type: string, required: false }
+      plain: { type: string, required: false }
+
+  - name: domain_set_tags
+    mode: admin
+    category: domain
+    description: Set tags on a domain (free-form labels for organization).
+    params:
+      domain: { type: string, required: true }
+      tags: { type: array, items: { type: string }, required: true }
+
+  - name: domain_delete_tags
+    mode: admin
+    category: domain
+    description: Remove all tags from a domain.
+    params:
+      domain: { type: string, required: true }
+
+  # --- MAILBOX MANAGEMENT ---
+
+  - name: mailbox_list
+    mode: admin
+    category: mailbox
+    description: List all mailboxes. Optional filter by domain.
+    params:
+      domain: { type: string, required: false }
+
+  - name: mailbox_list_by_domain
+    mode: admin
+    category: mailbox
+    description: List mailboxes belonging to a specific domain (alternative to mailbox_list with domain filter).
+    params:
+      domain: { type: string, required: true }
+
+  - name: mailbox_create
+    mode: admin
+    category: mailbox
+    description: |
+      Create a new mailbox. Password must meet Mailcow's complexity policy.
+      For service accounts, prefer creating an app password afterwards.
+    params:
+      email: { type: string, required: true }
+      name: { type: string, required: true }
+      quota_mb: { type: integer, default: 1024 }
+      password: { type: string, required: true, secret: true }
+      active: { type: boolean, default: true }
+      force_pw_update: { type: boolean, default: false, description: "User must change pw on first login" }
+      tls_enforce_in: { type: boolean, default: false }
+      tls_enforce_out: { type: boolean, default: false }
+
+  - name: mailbox_update
+    mode: admin
+    category: mailbox
+    description: Update mailbox attributes (name, quota, active, TLS enforcement, etc.).
+    params:
+      email: { type: string, required: true }
+      name: { type: string, required: false }
+      quota_mb: { type: integer, required: false }
+      active: { type: boolean, required: false }
+      tls_enforce_in: { type: boolean, required: false }
+      tls_enforce_out: { type: boolean, required: false }
+      sogo_access: { type: boolean, required: false }
+      imap_access: { type: boolean, required: false }
+      smtp_access: { type: boolean, required: false }
+      pop3_access: { type: boolean, required: false }
+
+  - name: mailbox_set_password
+    mode: admin
+    category: mailbox
+    description: Reset a mailbox password. Prefer app passwords for services.
+    params:
+      email: { type: string, required: true }
+      password: { type: string, required: true, secret: true }
+
+  - name: mailbox_delete
+    mode: admin
+    category: mailbox
+    description: Delete a mailbox. Destructive — requires confirm=true.
+    params:
+      email: { type: string, required: true }
+      confirm: { type: boolean, required: true }
+
+  - name: mailbox_quota_report
+    mode: admin
+    category: mailbox
+    description: |
+      Quota usage for all mailboxes, sorted by usage descending. Useful for
+      finding mailboxes nearing their limit.
+    params:
+      threshold_pct: { type: integer, default: 0, description: "Filter: only return >= threshold" }
+
+  - name: mailbox_set_tags
+    mode: admin
+    category: mailbox
+    description: Set tags on a mailbox.
+    params:
+      email: { type: string, required: true }
+      tags: { type: array, items: { type: string }, required: true }
+
+  - name: mailbox_delete_tags
+    mode: admin
+    category: mailbox
+    description: Remove all tags from a mailbox.
+    params:
+      email: { type: string, required: true }
+
+  - name: mailbox_set_acl
+    mode: admin
+    category: mailbox
+    description: |
+      Set ACL flags for a mailbox (what the user can do in SOGo:
+      spam_alias, tls_policy, spam_score, spam_policy, delimiter_action,
+      syncjobs, eas_reset, quarantine, sogo_profile_reset, etc.).
+    params:
+      email: { type: string, required: true }
+      acl: { type: array, items: { type: string }, required: true }
+
+  - name: mailbox_set_custom_attribute
+    mode: admin
+    category: mailbox
+    description: Set a custom attribute (key/value) on a mailbox.
+    params:
+      email: { type: string, required: true }
+      attribute: { type: string, required: true }
+      value: { type: string, required: true }
+
+  # --- ALIAS MANAGEMENT ---
+
+  - name: alias_list
+    mode: admin
+    category: alias
+    description: List all aliases. Optional filter by domain.
+    params:
+      domain: { type: string, required: false }
+
+  - name: alias_create
+    mode: admin
+    category: alias
+    description: Create an alias (forwarding address).
+    params:
+      address: { type: string, required: true }
+      goto: { type: string, required: true, description: "Destination address (or comma-separated for multi)" }
+      active: { type: boolean, default: true }
+      sogo_visible: { type: boolean, default: true, description: "Visible as identity in SOGo" }
+      goto_null: { type: boolean, default: false, description: "Silent discard if true" }
+      goto_spam: { type: boolean, default: false, description: "Always learn as spam" }
+      goto_ham: { type: boolean, default: false, description: "Always learn as ham" }
+
+  - name: alias_update
+    mode: admin
+    category: alias
+    description: Update an alias.
+    params:
+      address: { type: string, required: true }
+      goto: { type: string, required: false }
+      active: { type: boolean, required: false }
+
+  - name: alias_delete
+    mode: admin
+    category: alias
+    description: Delete an alias. Requires confirm=true.
+    params:
+      address: { type: string, required: true }
+      confirm: { type: boolean, required: true }
+
+  - name: time_limited_alias_list
+    mode: admin
+    category: alias
+    description: List time-limited (temporary) aliases.
+    params:
+      domain: { type: string, required: false }
+
+  - name: time_limited_alias_create
+    mode: admin
+    category: alias
+    description: |
+      Create a time-limited alias that auto-expires. Useful for one-shot
+      throwaway addresses.
+    params:
+      address: { type: string, required: true }
+      goto: { type: string, required: true }
+      validity_days: { type: integer, default: 7 }
+
+  # --- APP PASSWORDS ---
+
+  - name: app_password_list
+    mode: admin
+    category: app_password
+    description: |
+      List app passwords for a mailbox. Returns metadata only (passwords are
+      hashed and never returned).
+    params:
+      email: { type: string, required: true }
+
+  - name: app_password_create
+    mode: admin
+    category: app_password
+    description: |
+      Create an app password scoped to specific protocols. Must be passed in by
+      caller (Mailcow does not generate). Returns the password ONCE.
+    params:
+      email: { type: string, required: true }
+      app_name: { type: string, required: true }
+      password: { type: string, required: true, secret: true }
+      protocols:
+        type: array
+        items: { type: string, enum: [imap, smtp, pop3, dav, sieve, eas] }
+        default: [imap, smtp]
+
+  - name: app_password_delete
+    mode: admin
+    category: app_password
+    description: Revoke an app password by ID.
+    params:
+      id: { type: integer, required: true }
+
+  # --- DKIM ---
+
+  - name: dkim_list
+    mode: admin
+    category: dkim
+    description: List DKIM keys for all domains (or a specific one).
+    params:
+      domain: { type: string, required: false }
+
+  - name: dkim_create
+    mode: admin
+    category: dkim
+    description: |
+      Generate a new DKIM key pair for a domain. Returns the public key for
+      DNS publication. Replaces any existing key for the same selector.
+    params:
+      domain: { type: string, required: true }
+      selector: { type: string, default: dkim }
+      key_size_bits: { type: integer, default: 2048, enum: [1024, 2048, 4096] }
+
+  - name: dkim_duplicate
+    mode: admin
+    category: dkim
+    description: Duplicate an existing DKIM key to another domain (same key/selector).
+    params:
+      from_domain: { type: string, required: true }
+      to_domain: { type: string, required: true }
+
+  - name: dkim_delete
+    mode: admin
+    category: dkim
+    description: Delete a DKIM key. Requires confirm=true.
+    params:
+      domain: { type: string, required: true }
+      confirm: { type: boolean, required: true }
+
+  # --- BCC MAPS ---
+
+  - name: bcc_list
+    mode: admin
+    category: bcc
+    description: |
+      List BCC maps. A BCC map silently sends a copy of every mail
+      from/to a specific address to a third address (compliance, audit).
+    params: {}
+
+  - name: bcc_create
+    mode: admin
+    category: bcc
+    description: Create a BCC map (silent copy rule).
+    params:
+      local_dest: { type: string, required: true, description: "Mailbox to monitor" }
+      bcc_dest: { type: string, required: true, description: "Address to receive copies" }
+      type: { type: string, enum: [sender, rcpt], required: true, description: "Copy when local_dest is sender or recipient" }
+      active: { type: boolean, default: true }
+
+  - name: bcc_delete
+    mode: admin
+    category: bcc
+    description: Delete a BCC map. Requires confirm=true.
+    params:
+      id: { type: integer, required: true }
+      confirm: { type: boolean, required: true }
+
+  # --- RECIPIENT MAP ---
+
+  - name: recipient_map_list
+    mode: admin
+    category: recipient_map
+    description: |
+      List recipient rewrites. A recipient map rewrites the destination of
+      incoming mail (e.g. all to old@domain → new@domain).
+    params: {}
+
+  - name: recipient_map_create
+    mode: admin
+    category: recipient_map
+    description: Create a recipient rewrite rule.
+    params:
+      old_dest: { type: string, required: true }
+      new_dest: { type: string, required: true }
+      active: { type: boolean, default: true }
+
+  - name: recipient_map_delete
+    mode: admin
+    category: recipient_map
+    description: Delete a recipient map.
+    params:
+      id: { type: integer, required: true }
+
+  # --- TRANSPORT MAPS (sender-dependent) ---
+
+  - name: transport_list
+    mode: admin
+    category: transport
+    description: |
+      List sender-dependent transports. Used to route outgoing mail through
+      different relays based on the sender (or destination).
+    params: {}
+
+  - name: transport_create
+    mode: admin
+    category: transport
+    description: Create a transport map.
+    params:
+      destination: { type: string, required: true, description: "Destination domain or address" }
+      nexthop: { type: string, required: true, description: "Next hop server (e.g. smtp:[relay.example.com]:587)" }
+      username: { type: string, required: false }
+      password: { type: string, required: false, secret: true }
+      active: { type: boolean, default: true }
+
+  - name: transport_delete
+    mode: admin
+    category: transport
+    description: Delete a transport.
+    params:
+      id: { type: integer, required: true }
+
+  # --- RELAYHOSTS ---
+
+  - name: relayhost_list
+    mode: admin
+    category: relayhost
+    description: List configured relayhosts (smarthosts) for outbound mail.
+    params: {}
+
+  - name: relayhost_create
+    mode: admin
+    category: relayhost
+    description: Create a relayhost (smarthost configuration).
+    params:
+      hostname: { type: string, required: true, description: "e.g. smtp.relay.com" }
+      username: { type: string, required: false }
+      password: { type: string, required: false, secret: true }
+      active: { type: boolean, default: true }
+
+  - name: relayhost_delete
+    mode: admin
+    category: relayhost
+    description: Delete a relayhost.
+    params:
+      id: { type: integer, required: true }
+
+  # --- TLS POLICY MAPS ---
+
+  - name: tls_policy_list
+    mode: admin
+    category: tls_policy
+    description: |
+      List TLS policy overrides (per-destination TLS enforcement).
+    params: {}
+
+  - name: tls_policy_create
+    mode: admin
+    category: tls_policy
+    description: Force TLS policy for outgoing mail to a specific destination.
+    params:
+      dest: { type: string, required: true, description: "Destination domain or address" }
+      policy: { type: string, enum: [none, may, encrypt, dane, dane-only, fingerprint, verify, secure], required: true }
+      parameters: { type: string, required: false, description: "Extra params (e.g. fingerprint values)" }
+      active: { type: boolean, default: true }
+
+  - name: tls_policy_delete
+    mode: admin
+    category: tls_policy
+    description: Delete a TLS policy.
+    params:
+      id: { type: integer, required: true }
+
+  # --- FORWARD HOSTS ---
+
+  - name: forward_host_list
+    mode: admin
+    category: forward_host
+    description: |
+      List trusted forwarding hosts (servers allowed to relay mail through
+      Mailcow without DNS-based verification).
+    params: {}
+
+  - name: forward_host_create
+    mode: admin
+    category: forward_host
+    description: Add a trusted forwarding host.
+    params:
+      hostname: { type: string, required: true }
+      filter_spam: { type: boolean, default: false }
+      keep_spam: { type: boolean, default: false }
+
+  - name: forward_host_delete
+    mode: admin
+    category: forward_host
+    description: Remove a forwarding host.
+    params:
+      hostname: { type: string, required: true }
+
+  # --- SYNC JOBS (IMAP fetch from external) ---
+
+  - name: sync_job_list
+    mode: admin
+    category: sync_job
+    description: |
+      List IMAP sync jobs (rules to fetch mail from external servers into
+      a local Mailcow mailbox).
+    params:
+      mailbox: { type: string, required: false }
+
+  - name: sync_job_create
+    mode: admin
+    category: sync_job
+    description: Create an IMAP sync job to fetch mail from a remote server.
+    params:
+      mailbox: { type: string, required: true, description: "Local destination mailbox" }
+      host: { type: string, required: true, description: "Remote IMAP host" }
+      port: { type: integer, default: 993 }
+      enc: { type: string, enum: [TLS, SSL, PLAIN], default: TLS }
+      user: { type: string, required: true }
+      password: { type: string, required: true, secret: true }
+      mins_interval: { type: integer, default: 20, description: "Sync every N minutes" }
+      maxage_days: { type: integer, default: 0, description: "0 = no limit" }
+      maxbytespersecond: { type: integer, default: 0, description: "Throttle in bytes/sec" }
+      timeout1: { type: integer, default: 600 }
+      timeout2: { type: integer, default: 600 }
+      delete2duplicates: { type: boolean, default: true }
+      delete1: { type: boolean, default: false, description: "Delete from source after fetch" }
+      delete2: { type: boolean, default: false }
+      automap: { type: boolean, default: true }
+      skipcrossduplicates: { type: boolean, default: false }
+      subfolder2: { type: string, default: "" }
+      exclude: { type: string, default: "" }
+      custom_params: { type: string, default: "" }
+      subscribeall: { type: boolean, default: false }
+      active: { type: boolean, default: true }
+
+  - name: sync_job_update
+    mode: admin
+    category: sync_job
+    description: Update an existing sync job.
+    params:
+      id: { type: integer, required: true }
+      mins_interval: { type: integer, required: false }
+      active: { type: boolean, required: false }
+      password: { type: string, required: false, secret: true }
+
+  - name: sync_job_delete
+    mode: admin
+    category: sync_job
+    description: Delete a sync job.
+    params:
+      id: { type: integer, required: true }
+
+  # --- RESOURCES (calendar resources: rooms, equipment) ---
+
+  - name: resource_list
+    mode: admin
+    category: resource
+    description: |
+      List shared resources (meeting rooms, equipment) used in SOGo calendars.
+    params: {}
+
+  - name: resource_create
+    mode: admin
+    category: resource
+    description: Create a calendar resource (room/equipment).
+    params:
+      name: { type: string, required: true }
+      domain: { type: string, required: true }
+      description: { type: string, required: false }
+      kind: { type: string, enum: [location, group, thing], default: location }
+      multiple_bookings:
+        type: integer
+        default: 0
+        description: "0=no, 1=yes parallel bookings"
+      active: { type: boolean, default: true }
+
+  - name: resource_delete
+    mode: admin
+    category: resource
+    description: Delete a resource.
+    params:
+      name: { type: string, required: true }
+
+  # --- OAUTH2 CLIENTS ---
+
+  - name: oauth2_client_list
+    mode: admin
+    category: oauth2
+    description: List OAuth2 clients registered with Mailcow.
+    params: {}
+
+  - name: oauth2_client_create
+    mode: admin
+    category: oauth2
+    description: Register a new OAuth2 client. Returns the client_id and client_secret.
+    params:
+      redirect_uri: { type: string, required: true }
+      grant_types: { type: string, default: "authorization_code refresh_token" }
+      scope: { type: string, default: "profile" }
+
+  - name: oauth2_client_delete
+    mode: admin
+    category: oauth2
+    description: Delete an OAuth2 client.
+    params:
+      id: { type: integer, required: true }
+
+  # --- DOMAIN ADMINS ---
+
+  - name: domain_admin_list
+    mode: admin
+    category: domain_admin
+    description: List domain admin accounts (limited admin scoped to specific domains).
+    params: {}
+
+  - name: domain_admin_create
+    mode: admin
+    category: domain_admin
+    description: Create a domain admin account.
+    params:
+      username: { type: string, required: true }
+      domains: { type: array, items: { type: string }, required: true }
+      password: { type: string, required: true, secret: true }
+      active: { type: boolean, default: true }
+
+  - name: domain_admin_update
+    mode: admin
+    category: domain_admin
+    description: Update a domain admin account.
+    params:
+      username: { type: string, required: true }
+      domains: { type: array, items: { type: string }, required: false }
+      password: { type: string, required: false, secret: true }
+      active: { type: boolean, required: false }
+
+  - name: domain_admin_set_acl
+    mode: admin
+    category: domain_admin
+    description: Set ACL flags for a domain admin (what they can do).
+    params:
+      username: { type: string, required: true }
+      acl: { type: array, items: { type: string }, required: true }
+
+  - name: domain_admin_delete
+    mode: admin
+    category: domain_admin
+    description: Delete a domain admin.
+    params:
+      username: { type: string, required: true }
+      confirm: { type: boolean, required: true }
+
+  - name: domain_admin_sso_token
+    mode: admin
+    category: domain_admin
+    description: |
+      Issue a single sign-on (SSO) token for a Domain Admin user. Returns a
+      one-shot URL that, when visited, logs the user into SOGo/Admin UI without
+      typing a password. Useful for support flows or admin onboarding.
+    params:
+      username: { type: string, required: true, description: "Domain admin username to impersonate" }
+
+  # --- DOMAIN POLICIES (whitelist/blacklist) ---
+
+  - name: domain_policy_list_blacklist
+    mode: admin
+    category: domain_policy
+    description: List blacklisted senders for a domain (always rejected).
+    params:
+      domain: { type: string, required: true }
+
+  - name: domain_policy_list_whitelist
+    mode: admin
+    category: domain_policy
+    description: List whitelisted senders for a domain (skip spam check).
+    params:
+      domain: { type: string, required: true }
+
+  - name: domain_policy_create
+    mode: admin
+    category: domain_policy
+    description: Add a sender to a domain's blacklist or whitelist.
+    params:
+      domain: { type: string, required: true }
+      object_list: { type: string, enum: [bl, wl], required: true, description: "bl=blacklist, wl=whitelist" }
+      object_from: { type: string, required: true, description: "Sender pattern (email or *@domain)" }
+      object_type: { type: string, enum: [sender, recipient], default: sender }
+
+  - name: domain_policy_delete
+    mode: admin
+    category: domain_policy
+    description: Remove a sender from a domain's blacklist or whitelist.
+    params:
+      id: { type: integer, required: true }
+
+  # --- QUARANTINE ---
+
+  - name: quarantine_list
+    mode: admin
+    category: quarantine
+    description: List quarantined messages (held due to spam/policy).
+    params: {}
+
+  - name: quarantine_release
+    mode: admin
+    category: quarantine
+    description: Release a quarantined message (deliver to recipient).
+    params:
+      ids: { type: array, items: { type: integer }, required: true }
+
+  - name: quarantine_learn_spam
+    mode: admin
+    category: quarantine
+    description: Mark quarantined messages as spam (train Rspamd).
+    params:
+      ids: { type: array, items: { type: integer }, required: true }
+
+  - name: quarantine_delete
+    mode: admin
+    category: quarantine
+    description: Delete quarantined messages permanently. Requires confirm=true.
+    params:
+      ids: { type: array, items: { type: integer }, required: true }
+      confirm: { type: boolean, required: true }
+
+  - name: quarantine_set_notification
+    mode: admin
+    category: quarantine
+    description: Configure quarantine notification settings (recipient frequency).
+    params:
+      release_format: { type: string, enum: [raw, attachment], default: attachment }
+      retention_size: { type: string, default: "10MiB" }
+      max_size: { type: string, default: "30MiB" }
+      max_age: { type: integer, default: 365, description: "Days before auto-delete" }
+      subject: { type: string, default: "Quarantine notification" }
+      html_tmpl: { type: string, required: false }
+      exclude_domains: { type: array, items: {type: string}, required: false }
+      release_format_text: { type: string, default: "raw" }
+      notification: { type: string, enum: [hourly, daily, weekly, never], default: hourly }
+      redirect: { type: string, required: false, description: "Redirect notif to single email" }
+
+  # --- POSTFIX QUEUE / MAIL QUEUE ---
+
+  - name: queue_list
+    mode: admin
+    category: queue
+    description: List messages in the Postfix queue.
+    params: {}
+
+  - name: queue_flush
+    mode: admin
+    category: queue
+    description: Force Postfix to retry sending all queued messages.
+    params: {}
+
+  - name: queue_delete
+    mode: admin
+    category: queue
+    description: Delete messages from the Postfix queue. Requires confirm=true.
+    params:
+      queue_ids: { type: array, items: { type: string }, required: true }
+      confirm: { type: boolean, required: true }
+
+  # --- FAIL2BAN ---
+
+  - name: fail2ban_get
+    mode: admin
+    category: fail2ban
+    description: |
+      Get Fail2Ban status: active jail config, currently banned IPs, white/blacklist.
+    params: {}
+
+  - name: fail2ban_update
+    mode: admin
+    category: fail2ban
+    description: Update Fail2Ban configuration (bantime, max retries, white/blacklist).
+    params:
+      ban_time: { type: integer, required: false, description: "Seconds" }
+      max_attempts: { type: integer, required: false }
+      retry_window: { type: integer, required: false, description: "Seconds" }
+      whitelist: { type: array, items: { type: string }, required: false }
+      blacklist: { type: array, items: { type: string }, required: false }
+      manage_external: { type: boolean, required: false }
+
+  - name: fail2ban_unban
+    mode: admin
+    category: fail2ban
+    description: Unban a specific IP currently in Fail2Ban.
+    params:
+      ip: { type: string, required: true }
+
+  # --- RATE LIMITS ---
+
+  - name: ratelimit_get_mailbox
+    mode: admin
+    category: ratelimit
+    description: Get rate limit for a mailbox.
+    params:
+      email: { type: string, required: true }
+
+  - name: ratelimit_set_mailbox
+    mode: admin
+    category: ratelimit
+    description: Set sender rate limit for a mailbox (msgs per timeframe).
+    params:
+      email: { type: string, required: true }
+      value: { type: integer, required: true, description: "Number of messages" }
+      frame: { type: string, enum: [s, m, h, d], required: true, description: "Per second/minute/hour/day" }
+
+  - name: ratelimit_get_domain
+    mode: admin
+    category: ratelimit
+    description: Get rate limit for a domain.
+    params:
+      domain: { type: string, required: true }
+
+  - name: ratelimit_set_domain
+    mode: admin
+    category: ratelimit
+    description: Set rate limit for a domain.
+    params:
+      domain: { type: string, required: true }
+      value: { type: integer, required: true }
+      frame: { type: string, enum: [s, m, h, d], required: true }
+
+  # --- SPAM ---
+
+  - name: spam_score_get
+    mode: admin
+    category: spam
+    description: |
+      Get spam filter scores (low_score / high_score thresholds) for a mailbox
+      or globally.
+    params:
+      email: { type: string, required: false, description: "If omitted, returns global default" }
+
+  - name: spam_score_set
+    mode: admin
+    category: spam
+    description: |
+      Set spam filter scores for a mailbox (low = greylist threshold,
+      high = reject threshold).
+    params:
+      email: { type: string, required: true }
+      low_score: { type: integer, required: true, description: "Mark as spam threshold" }
+      high_score: { type: integer, required: true, description: "Reject threshold" }
+
+  # --- SETTINGS / CORS / IDP ---
+
+  - name: cors_settings_update
+    mode: admin
+    category: settings
+    description: Update API CORS allowed origins/methods/headers.
+    params:
+      allowed_origins: { type: array, items: { type: string }, required: false }
+      allowed_methods: { type: array, items: { type: string }, required: false }
+
+  - name: identity_provider_settings_update
+    mode: admin
+    category: settings
+    description: Configure external identity provider (OIDC) for SOGo SSO.
+    params:
+      authsource: { type: string, enum: [keycloak, generic-oidc, ldap, mailcow], required: true }
+      server_url: { type: string, required: false }
+      realm: { type: string, required: false }
+      client_id: { type: string, required: false }
+      client_secret: { type: string, required: false, secret: true }
+      mailpassword_flow: { type: boolean, default: false }
+      periodic_sync: { type: boolean, default: false }
+      sync_interval: { type: integer, default: 15, description: "Minutes" }
+      import_users: { type: boolean, default: false }
+
+  - name: pushover_set
+    mode: admin
+    category: settings
+    description: Update Pushover (mobile notification) settings for a mailbox.
+    params:
+      email: { type: string, required: true }
+      key: { type: string, required: true, secret: true }
+      token: { type: string, required: true, secret: true }
+      title: { type: string, required: false }
+      text: { type: string, required: false }
+      senders: { type: array, items: { type: string }, required: false }
+      senders_regex: { type: string, required: false }
+      active: { type: boolean, default: true }
+
+  # --- LOGS ---
+
+  - name: logs_get_postfix
+    mode: admin
+    category: logs
+    description: Retrieve recent Postfix logs (mail transactions).
+    params:
+      lines: { type: integer, default: 100, max: 5000 }
+
+  - name: logs_get_dovecot
+    mode: admin
+    category: logs
+    description: Retrieve recent Dovecot logs (IMAP/POP3 access).
+    params:
+      lines: { type: integer, default: 100, max: 5000 }
+
+  - name: logs_get_rspamd
+    mode: admin
+    category: logs
+    description: Retrieve recent Rspamd logs (spam scanning).
+    params:
+      lines: { type: integer, default: 100, max: 5000 }
+
+  - name: logs_get_sogo
+    mode: admin
+    category: logs
+    description: Retrieve recent SOGo logs (webmail).
+    params:
+      lines: { type: integer, default: 100, max: 5000 }
+
+  - name: logs_get_acme
+    mode: admin
+    category: logs
+    description: Retrieve recent ACME logs (Let's Encrypt cert renewal).
+    params:
+      lines: { type: integer, default: 100, max: 5000 }
+
+  - name: logs_get_netfilter
+    mode: admin
+    category: logs
+    description: Retrieve recent Netfilter logs (firewall events).
+    params:
+      lines: { type: integer, default: 100, max: 5000 }
+
+  - name: logs_get_watchdog
+    mode: admin
+    category: logs
+    description: Retrieve recent Watchdog logs (service health monitoring).
+    params:
+      lines: { type: integer, default: 100, max: 5000 }
+
+  - name: logs_get_api
+    mode: admin
+    category: logs
+    description: Retrieve recent API access logs.
+    params:
+      lines: { type: integer, default: 100, max: 5000 }
+
+  - name: logs_get_autodiscover
+    mode: admin
+    category: logs
+    description: Retrieve recent Autodiscover logs (mobile/desktop client config).
+    params:
+      lines: { type: integer, default: 100, max: 5000 }
+
+  - name: logs_get_ratelimit
+    mode: admin
+    category: logs
+    description: Retrieve recent rate limit hit logs.
+    params:
+      lines: { type: integer, default: 100, max: 5000 }
+
+  # --- STATUS ---
+
+  - name: server_version
+    mode: admin
+    category: status
+    description: Get Mailcow version info.
+    params: {}
+
+  - name: server_containers_status
+    mode: admin
+    category: status
+    description: Get the status of all Mailcow Docker containers.
+    params: {}
+
+  - name: server_vmail_status
+    mode: admin
+    category: status
+    description: Get vmail (mail storage) disk usage.
+    params: {}
+
+  - name: server_status_summary
+    mode: admin
+    category: status
+    description: |
+      Combined health check: version, containers (running/healthy/down counts),
+      vmail disk %, queue length, fail2ban active bans count.
+      Lightweight one-shot for monitoring.
+    params: {}
+
+  # --- DELIVERY TESTING ---
+
+  - name: send_test_mail
+    mode: admin
+    category: delivery
+    description: |
+      Send a test email through the local Postfix to verify delivery. Returns
+      the Postfix queue ID for log tracing.
+    params:
+      from_addr: { type: string, required: true }
+      to_addr: { type: string, required: true }
+      subject: { type: string, default: "Mailcow MCP delivery test" }

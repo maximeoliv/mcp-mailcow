@@ -1,0 +1,26 @@
+{
+  "_comment": "Sample Claude Desktop config snippet. Place under 'mcpServers' in your real config file.",
+
+  "mcpServers": {
+    "mailcow-mailbox": {
+      "command": "uvx",
+      "args": ["mcp-mailcow", "--mode", "user"],
+      "env": {
+        "MAILCOW_HOST": "mail.example.com",
+        "MAILCOW_MAIL_USER": "you@example.com",
+        "MAILCOW_MAIL_PASS": "your-app-password-here",
+        "MAILCOW_IMAP_PORT": "993",
+        "MAILCOW_SMTP_PORT": "587"
+      }
+    },
+
+    "mailcow-admin": {
+      "command": "uvx",
+      "args": ["mcp-mailcow", "--mode", "admin"],
+      "env": {
+        "MAILCOW_ADMIN_URL": "https://mail.example.com",
+        "MAILCOW_ADMIN_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}

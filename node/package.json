@@ -1,0 +1,62 @@
+{
+  "name": "mcp-mailcow",
+  "version": "1.0.0",
+  "description": "Model Context Protocol server for Mailcow — read/send mail and manage your Mailcow server from Claude",
+  "keywords": [
+    "mcp",
+    "mailcow",
+    "mail",
+    "imap",
+    "smtp",
+    "claude",
+    "anthropic"
+  ],
+  "license": "MIT",
+  "author": "Maxime Olivier <git@maximeolivier.fr>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maximeoliv/mcp-mailcow.git"
+  },
+  "homepage": "https://github.com/maximeoliv/mcp-mailcow#readme",
+  "bugs": "https://github.com/maximeoliv/mcp-mailcow/issues",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "mcp-mailcow": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "tools-schema.yaml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check src",
+    "format": "biome format --write src",
+    "prepack": "cp ../tools-schema.yaml ./tools-schema.yaml && cp ../README.md ./README.md && cp ../LICENSE ./LICENSE && npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "imapflow": "^1.0.155",
+    "mailparser": "^3.7.0",
+    "nodemailer": "^6.9.13",
+    "yaml": "^2.4.0",
+    "undici": "^6.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.7.0",
+    "@types/mailparser": "^3.4.0",
+    "@types/node": "^20.11.0",
+    "@types/nodemailer": "^6.4.0",
+    "nock": "^13.5.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.4.0"
+  }
+}
