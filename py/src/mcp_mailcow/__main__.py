@@ -5,9 +5,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from typing import NoReturn
 
 from .server import run_server
+
+
+def _version_string() -> str:
+    """Read the installed package version. Falls back to 'dev' when running
+    from a source checkout that hasn't been installed (e.g. directly via
+    `python -m mcp_mailcow`)."""
+    try:
+        return _pkg_version("mcp-mailcow")
+    except PackageNotFoundError:
+        return "dev"
 
 
 def main() -> NoReturn:
@@ -24,7 +35,7 @@ def main() -> NoReturn:
     parser.add_argument(
         "--version",
         action="version",
-        version="%(prog)s 1.0.0",
+        version=f"%(prog)s {_version_string()}",
     )
     args = parser.parse_args()
 

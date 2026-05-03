@@ -423,9 +423,16 @@ export const server_status_summary = (ctx: AdminContext): Handler => async (args
     const containersDict = (containers ?? {}) as Record<string, Container>;
     const values = Object.values(containersDict);
     const running = values.filter((v) => v?.state === "running").length;
-    const healthy = values.filter(
-      (v) => v?.state === "running" && (v?.status ?? "").startsWith("healthy"),
-    ).length;
+    // Mailcow's /status/containers does NOT expose Docker healthcheck
+    // results — only state. Detect if any container reports an explicit
+    // status; otherwise return null rather than 0 (which is misleading).
+    const runningContainers = values.filter((v) => v?.state === "running");
+    const anyHasStatus = runningContainers.some((v) => v?.status);
+    const healthy: number | null = anyHasStatus
+      ? runningContainers.filter((v) =>
+          (v?.status ?? "").toLowerCase().includes("healthy"),
+        ).length
+      : null;
     const down = values.filter((v) => v?.state && v.state !== "running").length;
 
     let vmailPct: number | null = null;

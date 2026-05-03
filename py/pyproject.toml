@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-mailcow"
-version = "0.3.0a0"
+version = "0.3.1a0"
 description = "Model Context Protocol server for Mailcow — read/send mail and manage your Mailcow server from Claude"
 readme = "../README.md"
 license = { text = "MIT" }

@@ -404,6 +404,7 @@ tools:
     params:
       email: { type: string, required: true }
       password: { type: string, required: true, secret: true }
+      confirm: { type: boolean, required: true, description: "Required safeguard against accidental destruction." }
 
   - name: mailbox_delete
     mode: admin
@@ -546,6 +547,7 @@ tools:
     description: Revoke an app password by ID.
     params:
       id: { type: integer, required: true }
+      confirm: { type: boolean, required: true, description: "Required safeguard against accidental destruction." }
 
   # --- DKIM ---
 
@@ -636,6 +638,7 @@ tools:
     description: Delete a recipient map.
     params:
       id: { type: integer, required: true }
+      confirm: { type: boolean, required: true, description: "Required safeguard against accidental destruction." }
 
   # --- TRANSPORT MAPS (sender-dependent) ---
 
@@ -664,6 +667,7 @@ tools:
     description: Delete a transport.
     params:
       id: { type: integer, required: true }
+      confirm: { type: boolean, required: true, description: "Required safeguard against accidental destruction." }
 
   # --- RELAYHOSTS ---
 
@@ -689,6 +693,7 @@ tools:
     description: Delete a relayhost.
     params:
       id: { type: integer, required: true }
+      confirm: { type: boolean, required: true, description: "Required safeguard against accidental destruction." }
 
   # --- TLS POLICY MAPS ---
 
@@ -715,6 +720,7 @@ tools:
     description: Delete a TLS policy.
     params:
       id: { type: integer, required: true }
+      confirm: { type: boolean, required: true, description: "Required safeguard against accidental destruction." }
 
   # --- FORWARD HOSTS ---
 
@@ -741,6 +747,7 @@ tools:
     description: Remove a forwarding host.
     params:
       hostname: { type: string, required: true }
+      confirm: { type: boolean, required: true, description: "Required safeguard against accidental destruction." }
 
   # --- SYNC JOBS (IMAP fetch from external) ---
 
@@ -796,6 +803,7 @@ tools:
     description: Delete a sync job.
     params:
       id: { type: integer, required: true }
+      confirm: { type: boolean, required: true, description: "Required safeguard against accidental destruction." }
 
   # --- RESOURCES (calendar resources: rooms, equipment) ---
 
@@ -827,6 +835,7 @@ tools:
     description: Delete a resource.
     params:
       name: { type: string, required: true }
+      confirm: { type: boolean, required: true, description: "Required safeguard against accidental destruction." }
 
   # --- OAUTH2 CLIENTS ---
 
@@ -851,6 +860,7 @@ tools:
     description: Delete an OAuth2 client.
     params:
       id: { type: integer, required: true }
+      confirm: { type: boolean, required: true, description: "Required safeguard against accidental destruction." }
 
   # --- DOMAIN ADMINS ---
 
@@ -938,6 +948,7 @@ tools:
     description: Remove a sender from a domain's blacklist or whitelist.
     params:
       id: { type: integer, required: true }
+      confirm: { type: boolean, required: true, description: "Required safeguard against accidental destruction." }
 
   # --- QUARANTINE ---
 

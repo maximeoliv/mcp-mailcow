@@ -1240,12 +1240,22 @@ def server_status_summary(ctx: AdminContext) -> ToolHandler:
             running = sum(
                 1 for v in cdict.values() if (v or {}).get("state") == "running"
             )
-            healthy = sum(
-                1
+            # Mailcow's /status/containers does NOT expose Docker healthcheck
+            # results — only state (running/exited/etc.). For per-container
+            # health you'd need direct Docker access on the host. We surface
+            # the count of containers reporting an explicit "healthy" status
+            # if Mailcow ever adds it (forward-compat); otherwise None.
+            healthy_vals = [
+                (v or {}).get("status")
                 for v in cdict.values()
                 if (v or {}).get("state") == "running"
-                and ((v or {}).get("status") or "").startswith("healthy")
-            )
+            ]
+            if any(s for s in healthy_vals):
+                healthy: int | None = sum(
+                    1 for s in healthy_vals if s and "healthy" in str(s).lower()
+                )
+            else:
+                healthy = None  # API doesn't report it
             down = sum(
                 1 for v in cdict.values() if (v or {}).get("state") not in ("running", None)
             )

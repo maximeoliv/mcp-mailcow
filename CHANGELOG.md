@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1-alpha] - 2026-05-03
+
+Patches sur les findings du cycle 2 Shadow E2E (rapport-cycle2-mcp-mailcow.md).
+Tous les bloquants sont fixés ; verdict Shadow : « v0.3.0-alpha → v1.0 : OK
+une fois finding #1 (YAML schema) corrigé ». Cette release adresse #1, #2, #3.
+
+### Fixed
+- **Schema YAML : `confirm` manquant** sur 11 destructive tools. Le code
+  Python/TS levait bien `ConfirmationRequired` runtime, mais le schema MCP
+  ne déclarait pas `confirm` comme `required: true`. Du coup l'agent (Claude)
+  apprenait par essai-erreur. Désormais le schema reflète la réalité, le
+  client MCP voit dès la liste des tools que `confirm` est requis.
+  Tools concernés : `mailbox_set_password`, `app_password_delete`,
+  `recipient_map_delete`, `transport_delete`, `relayhost_delete`,
+  `tls_policy_delete`, `forward_host_delete`, `sync_job_delete`,
+  `resource_delete`, `oauth2_client_delete`, `domain_policy_delete`.
+- **Version mismatch `__main__.py`** : hardcodait `1.0.0` alors que
+  `pyproject.toml` était à `0.3.0a0`. `--version` lit maintenant
+  `importlib.metadata.version("mcp-mailcow")` avec fallback `dev` si pas
+  installé.
+- **`server_status_summary.containers_healthy`** : retournait toujours `0`
+  car Mailcow API `/status/containers` n'expose **pas** les healthchecks
+  Docker (seulement `state`). Désormais retourne `null` si aucun container
+  ne reporte de statut explicite (forward-compat si Mailcow ajoute le
+  champ un jour). Mêmes ajustements côté Python et TypeScript.
+
+### Changed
+- `pyproject.toml` `0.3.0a0` → `0.3.1a0`.
+- `node/package.json` `0.3.0-alpha.0` → `0.3.1-alpha.0`.
+
 ## [0.3.0-alpha] - 2026-05-03
 
 Iteration based on Shadow PC end-to-end test report (`rapport-test-mcp-mailcow.md`).
