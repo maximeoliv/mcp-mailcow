@@ -33,13 +33,13 @@ async def run_server(mode: str) -> None:
 
         config = load_user_config()
         audit = AuditLogger(config.audit_log)
-        registry = build_user_registry(config, audit)
+        registry, ctx = build_user_registry(config, audit)
     else:
         from .registry import build_admin_registry
 
         config = load_admin_config()
         audit = AuditLogger(config.audit_log)
-        registry = build_admin_registry(config, audit)
+        registry, ctx = build_admin_registry(config, audit)
 
     server = Server("mcp-mailcow")
 
@@ -71,5 +71,15 @@ async def run_server(mode: str) -> None:
         )
         return [TextContent(type="text", text=text)]
 
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(read_stream, write_stream, server.create_initialization_options())
+    finally:
+        # Close persistent resources owned by the context (e.g. the
+        # MailcowClient httpx pool in admin mode). Best-effort.
+        aclose = getattr(ctx, "aclose", None)
+        if callable(aclose):
+            try:
+                await aclose()
+            except Exception:
+                logger.exception("error during context cleanup")

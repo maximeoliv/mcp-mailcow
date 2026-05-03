@@ -8,17 +8,22 @@ import * as h from "./handlers.js";
 
 type Handler = (args: unknown) => Promise<unknown>;
 
+export interface AdminRegistryBuild {
+  registry: Record<string, Handler>;
+  ctx: h.AdminContext;
+}
+
 export function buildAdminRegistry(
   config: AdminConfig,
   audit: AuditLogger,
-): Record<string, Handler> {
+): AdminRegistryBuild {
   const ctx = h.makeContext(config, audit);
   const wrap = (factory: (c: h.AdminContext) => h.Handler): Handler => {
     const fn = factory(ctx);
     return (args: unknown) => fn((args as Record<string, unknown>) ?? {});
   };
 
-  return {
+  const registry: Record<string, Handler> = {
     // domain
     domain_list: wrap(h.domain_list),
     domain_create: wrap(h.domain_create),
@@ -136,4 +141,5 @@ export function buildAdminRegistry(
     // delivery
     send_test_mail: wrap(h.send_test_mail),
   };
+  return { registry, ctx };
 }

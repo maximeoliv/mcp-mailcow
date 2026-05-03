@@ -59,8 +59,10 @@ async def test_mailbox_create_payload(admin_ctx):
 @pytest.mark.asyncio
 @respx.mock
 async def test_mailbox_delete_requires_confirm(admin_ctx):
+    from mcp_mailcow.exceptions import ConfirmationRequired
+
     handler = at.mailbox_delete(admin_ctx)
-    with pytest.raises(ValueError, match="confirm"):
+    with pytest.raises(ConfirmationRequired, match="confirm"):
         await handler({"email": "x@a.com"})
 
 

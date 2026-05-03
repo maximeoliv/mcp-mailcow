@@ -16,14 +16,19 @@ export async function runServer(mode: "user" | "admin"): Promise<void> {
   const tools = toolsForMode(schema, mode);
 
   let registry: Record<string, (args: unknown) => Promise<unknown>>;
+  let ctx: { aclose?: () => Promise<void> } | undefined;
   if (mode === "user") {
     const config = loadUserConfig();
     const audit = new AuditLogger(config.auditLog);
-    registry = buildUserRegistry(config, audit);
+    const built = buildUserRegistry(config, audit);
+    registry = built.registry;
+    ctx = built.ctx;
   } else {
     const config = loadAdminConfig();
     const audit = new AuditLogger(config.auditLog);
-    registry = buildAdminRegistry(config, audit);
+    const built = buildAdminRegistry(config, audit);
+    registry = built.registry;
+    ctx = built.ctx;
   }
 
   const server = new Server(
@@ -70,5 +75,17 @@ export async function runServer(mode: "user" | "admin"): Promise<void> {
   );
 
   const transport = new StdioServerTransport();
-  await server.connect(transport);
+  try {
+    await server.connect(transport);
+  } finally {
+    // Close persistent resources owned by the context (admin: MailcowClient
+    // dispatcher; user: nothing today). Best-effort.
+    if (ctx?.aclose) {
+      try {
+        await ctx.aclose();
+      } catch {
+        /* swallow cleanup errors */
+      }
+    }
+  }
 }

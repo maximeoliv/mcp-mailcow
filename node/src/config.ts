@@ -23,6 +23,8 @@ export interface AdminConfig {
   baseUrl: string;
   apiKey: string;
   tlsVerify: boolean;
+  /** Timeout per HTTP request in ms. Default 60_000 (was 30_000 in v0.3). */
+  apiTimeoutMs?: number;
   auditLog: string;
 }
 
@@ -67,6 +69,8 @@ export function loadAdminConfig(): AdminConfig {
     baseUrl: require_("MAILCOW_ADMIN_URL").replace(/\/$/, ""),
     apiKey: require_("MAILCOW_ADMIN_API_KEY"),
     tlsVerify: boolEnv("MCP_MAILCOW_TLS_VERIFY", true),
+    apiTimeoutMs:
+      Number.parseInt(process.env.MCP_MAILCOW_API_TIMEOUT_MS || "60000", 10) || 60_000,
     auditLog: process.env.MCP_MAILCOW_AUDIT_LOG || DEFAULT_AUDIT_LOG,
   };
 }

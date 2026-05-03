@@ -21,19 +21,52 @@ export interface MailcowClientOptions {
 export class MailcowClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
-  private readonly dispatcher?: Agent;
+  private dispatcher?: Agent;
+  private readonly tlsVerify: boolean;
   private readonly timeoutMs: number;
+  private closed = false;
 
   constructor(opts: MailcowClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/$/, "");
     this.apiKey = opts.apiKey;
-    this.timeoutMs = opts.timeoutMs ?? 30_000;
-    if (opts.tlsVerify === false) {
+    this.timeoutMs = opts.timeoutMs ?? 60_000;
+    this.tlsVerify = opts.tlsVerify !== false;
+    if (!this.tlsVerify) {
       this.dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
     }
   }
 
+  /**
+   * Close the underlying dispatcher. Idempotent.
+   *
+   * Called at server shutdown. Re-opening (subsequent get/post calls
+   * after close) will rebuild the dispatcher transparently.
+   */
+  async aclose(): Promise<void> {
+    this.closed = true;
+    if (this.dispatcher) {
+      try {
+        await this.dispatcher.close();
+      } catch {
+        /* swallow */
+      }
+      this.dispatcher = undefined;
+    }
+  }
+
+  private ensureDispatcher(): void {
+    if (this.closed) {
+      // Lazy rebuild: a previous transient error or shutdown closed the
+      // dispatcher. Build a fresh one.
+      if (!this.tlsVerify) {
+        this.dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+      }
+      this.closed = false;
+    }
+  }
+
   private async request(method: string, path: string, body?: unknown): Promise<unknown> {
+    this.ensureDispatcher();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {

@@ -1,13 +1,19 @@
 """Admin-mode tool implementations (Mailcow REST API).
 
 Pattern: each tool is a factory `tool_name(ctx) -> ToolHandler` that captures
-the AdminContext (config + audit + client) and returns an async callable.
+the AdminContext (config + audit + persistent client) and returns an async
+callable.
+
+Since v0.4.0-alpha the ``MailcowClient`` is a **persistent instance** owned
+by the AdminContext and reused across all tool calls (was: per-call client).
+This avoids TLS handshake overhead and keeps the asyncio loop healthy across
+transient errors. See mailcow_api.py for the recovery strategy.
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .audit import AuditLogger
@@ -20,15 +26,23 @@ ToolHandler = Callable[[dict[str, Any]], Awaitable[Any]]
 
 @dataclass
 class AdminContext:
+    """Holds config, audit log, and the persistent Mailcow API client."""
+
     config: AdminConfig
     audit: AuditLogger
+    client: MailcowClient = field(init=False)
 
-    def client(self) -> MailcowClient:
-        return MailcowClient(
+    def __post_init__(self) -> None:
+        self.client = MailcowClient(
             base_url=self.config.base_url,
             api_key=self.config.api_key,
             tls_verify=self.config.tls_verify,
+            timeout=self.config.api_timeout,
         )
+
+    async def aclose(self) -> None:
+        """Close the persistent client. Called at server shutdown."""
+        await self.client.aclose()
 
 
 def _b(v: Any) -> int:
@@ -48,8 +62,7 @@ def _require_confirm(args: dict[str, Any], op: str) -> None:
 def domain_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("domain_list", args):
-            async with ctx.client() as c:
-                return await c.get("/api/v1/get/domain/all")
+            return await ctx.client.get("/api/v1/get/domain/all")
     return h
 
 
@@ -67,8 +80,7 @@ def domain_create(ctx: AdminContext) -> ToolHandler:
                 "backupmx": _b(args.get("backupmx", False)),
                 "active": _b(args.get("active", True)),
             }
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/domain", payload)
+            return await ctx.client.post("/api/v1/add/domain", payload)
     return h
 
 
@@ -82,8 +94,7 @@ def domain_update(ctx: AdminContext) -> ToolHandler:
             if "mailboxes" in args: attr["mailboxes"] = args["mailboxes"]
             if "aliases" in args: attr["aliases"] = args["aliases"]
             if "active" in args: attr["active"] = _b(args["active"])
-            async with ctx.client() as c:
-                return await c.post("/api/v1/edit/domain", {"items": [args["domain"]], "attr": attr})
+            return await ctx.client.post("/api/v1/edit/domain", {"items": [args["domain"]], "attr": attr})
     return h
 
 
@@ -91,8 +102,7 @@ def domain_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "domain_delete")
         with ctx.audit.trace("domain_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/domain", [args["domain"]])
+            return await ctx.client.post("/api/v1/delete/domain", [args["domain"]])
     return h
 
 
@@ -102,8 +112,7 @@ def domain_set_footer(ctx: AdminContext) -> ToolHandler:
             attr = {}
             if "html" in args: attr["html"] = args["html"]
             if "plain" in args: attr["plain"] = args["plain"]
-            async with ctx.client() as c:
-                return await c.post(
+            return await ctx.client.post(
                     "/api/v1/edit/domain/footer",
                     {"items": [args["domain"]], "attr": attr},
                 )
@@ -114,8 +123,7 @@ def domain_set_tags(ctx: AdminContext) -> ToolHandler:
     """Set tags on a domain — done via the standard edit/domain endpoint."""
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("domain_set_tags", args):
-            async with ctx.client() as c:
-                return await c.post(
+            return await ctx.client.post(
                     "/api/v1/edit/domain",
                     {"items": [args["domain"]], "attr": {"tags": args["tags"]}},
                 )
@@ -125,8 +133,7 @@ def domain_set_tags(ctx: AdminContext) -> ToolHandler:
 def domain_delete_tags(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("domain_delete_tags", args):
-            async with ctx.client() as c:
-                return await c.post(f"/api/v1/delete/domain/tag/{args['domain']}", {})
+            return await ctx.client.post(f"/api/v1/delete/domain/tag/{args['domain']}", {})
     return h
 
 
@@ -137,19 +144,17 @@ def domain_delete_tags(ctx: AdminContext) -> ToolHandler:
 def mailbox_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("mailbox_list", args):
-            async with ctx.client() as c:
-                data = await c.get("/api/v1/get/mailbox/all")
-                if isinstance(data, list) and args.get("domain"):
-                    data = [m for m in data if m.get("domain") == args["domain"]]
-                return data
+            data = await ctx.client.get("/api/v1/get/mailbox/all")
+            if isinstance(data, list) and args.get("domain"):
+                data = [m for m in data if m.get("domain") == args["domain"]]
+            return data
     return h
 
 
 def mailbox_list_by_domain(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("mailbox_list_by_domain", args):
-            async with ctx.client() as c:
-                return await c.get(f"/api/v1/get/mailbox/all/{args['domain']}")
+            return await ctx.client.get(f"/api/v1/get/mailbox/all/{args['domain']}")
     return h
 
 
@@ -169,8 +174,7 @@ def mailbox_create(ctx: AdminContext) -> ToolHandler:
                 "tls_enforce_in": _b(args.get("tls_enforce_in", False)),
                 "tls_enforce_out": _b(args.get("tls_enforce_out", False)),
             }
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/mailbox", payload)
+            return await ctx.client.post("/api/v1/add/mailbox", payload)
     return h
 
 
@@ -187,8 +191,7 @@ def mailbox_update(ctx: AdminContext) -> ToolHandler:
                 if k_in in args:
                     v = args[k_in]
                     attr[k_api] = _b(v) if isinstance(v, bool) else v
-            async with ctx.client() as c:
-                return await c.post("/api/v1/edit/mailbox", {"items": [args["email"]], "attr": attr})
+            return await ctx.client.post("/api/v1/edit/mailbox", {"items": [args["email"]], "attr": attr})
     return h
 
 
@@ -198,8 +201,7 @@ def mailbox_set_password(ctx: AdminContext) -> ToolHandler:
         # (loss of access). Require explicit confirm.
         _require_confirm(args, "mailbox_set_password")
         with ctx.audit.trace("mailbox_set_password", args):
-            async with ctx.client() as c:
-                return await c.post(
+            return await ctx.client.post(
                     "/api/v1/edit/mailbox",
                     {"items": [args["email"]], "attr": {"password": args["password"], "password2": args["password"]}},
                 )
@@ -210,8 +212,7 @@ def mailbox_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "mailbox_delete")
         with ctx.audit.trace("mailbox_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/mailbox", [args["email"]])
+            return await ctx.client.post("/api/v1/delete/mailbox", [args["email"]])
     return h
 
 
@@ -219,8 +220,7 @@ def mailbox_quota_report(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("mailbox_quota_report", args):
             threshold = int(args.get("threshold_pct", 0))
-            async with ctx.client() as c:
-                data = await c.get("/api/v1/get/mailbox/all")
+            data = await ctx.client.get("/api/v1/get/mailbox/all")
             out = []
             for m in data if isinstance(data, list) else []:
                 quota = int(m.get("quota", 0))
@@ -241,8 +241,7 @@ def mailbox_quota_report(ctx: AdminContext) -> ToolHandler:
 def mailbox_set_tags(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("mailbox_set_tags", args):
-            async with ctx.client() as c:
-                return await c.post(
+            return await ctx.client.post(
                     "/api/v1/edit/mailbox",
                     {"items": [args["email"]], "attr": {"tags": args["tags"]}},
                 )
@@ -252,16 +251,14 @@ def mailbox_set_tags(ctx: AdminContext) -> ToolHandler:
 def mailbox_delete_tags(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("mailbox_delete_tags", args):
-            async with ctx.client() as c:
-                return await c.post(f"/api/v1/delete/mailbox/tag/{args['email']}", {})
+            return await ctx.client.post(f"/api/v1/delete/mailbox/tag/{args['email']}", {})
     return h
 
 
 def mailbox_set_acl(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("mailbox_set_acl", args):
-            async with ctx.client() as c:
-                return await c.post(
+            return await ctx.client.post(
                     "/api/v1/edit/user-acl",
                     {"items": [args["email"]], "attr": {"user_acl": args["acl"]}},
                 )
@@ -271,8 +268,7 @@ def mailbox_set_acl(ctx: AdminContext) -> ToolHandler:
 def mailbox_set_custom_attribute(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("mailbox_set_custom_attribute", args):
-            async with ctx.client() as c:
-                return await c.post(
+            return await ctx.client.post(
                     "/api/v1/edit/mailbox/custom-attribute",
                     {
                         "items": [args["email"]],
@@ -289,11 +285,10 @@ def mailbox_set_custom_attribute(ctx: AdminContext) -> ToolHandler:
 def alias_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("alias_list", args):
-            async with ctx.client() as c:
-                data = await c.get("/api/v1/get/alias/all")
-                if isinstance(data, list) and args.get("domain"):
-                    data = [a for a in data if a.get("domain") == args["domain"]]
-                return data
+            data = await ctx.client.get("/api/v1/get/alias/all")
+            if isinstance(data, list) and args.get("domain"):
+                data = [a for a in data if a.get("domain") == args["domain"]]
+            return data
     return h
 
 
@@ -309,27 +304,25 @@ def alias_create(ctx: AdminContext) -> ToolHandler:
                 "goto_spam": _b(args.get("goto_spam", False)),
                 "goto_ham": _b(args.get("goto_ham", False)),
             }
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/alias", payload)
+            return await ctx.client.post("/api/v1/add/alias", payload)
     return h
 
 
 def alias_update(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("alias_update", args):
-            async with ctx.client() as c:
-                # Find ID from address
-                aliases = await c.get("/api/v1/get/alias/all")
-                target = next((a for a in aliases if a.get("address") == args["address"]), None)
-                if not target:
-                    raise RuntimeError(f"alias '{args['address']}' not found")
-                attr: dict[str, Any] = {}
-                if "goto" in args: attr["goto"] = args["goto"]
-                if "active" in args: attr["active"] = _b(args["active"])
-                return await c.post(
-                    "/api/v1/edit/alias",
-                    {"items": [str(target["id"])], "attr": attr},
-                )
+            # Find ID from address
+            aliases = await ctx.client.get("/api/v1/get/alias/all")
+            target = next((a for a in aliases if a.get("address") == args["address"]), None)
+            if not target:
+                raise RuntimeError(f"alias '{args['address']}' not found")
+            attr: dict[str, Any] = {}
+            if "goto" in args: attr["goto"] = args["goto"]
+            if "active" in args: attr["active"] = _b(args["active"])
+            return await ctx.client.post(
+                "/api/v1/edit/alias",
+                {"items": [str(target["id"])], "attr": attr},
+            )
     return h
 
 
@@ -337,32 +330,29 @@ def alias_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "alias_delete")
         with ctx.audit.trace("alias_delete", args):
-            async with ctx.client() as c:
-                aliases = await c.get("/api/v1/get/alias/all")
-                target = next((a for a in aliases if a.get("address") == args["address"]), None)
-                if not target:
-                    raise RuntimeError(f"alias '{args['address']}' not found")
-                return await c.post("/api/v1/delete/alias", [str(target["id"])])
+            aliases = await ctx.client.get("/api/v1/get/alias/all")
+            target = next((a for a in aliases if a.get("address") == args["address"]), None)
+            if not target:
+                raise RuntimeError(f"alias '{args['address']}' not found")
+            return await ctx.client.post("/api/v1/delete/alias", [str(target["id"])])
     return h
 
 
 def time_limited_alias_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("time_limited_alias_list", args):
-            async with ctx.client() as c:
-                # Mailcow expects a mailbox parameter for this endpoint
-                if "mailbox" in args:
-                    return await c.get(f"/api/v1/get/time_limited_aliases/{args['mailbox']}")
-                else:
-                    return await c.get("/api/v1/get/time_limited_aliases/all")
+            # Mailcow expects a mailbox parameter for this endpoint
+            if "mailbox" in args:
+                return await ctx.client.get(f"/api/v1/get/time_limited_aliases/{args['mailbox']}")
+            else:
+                return await ctx.client.get("/api/v1/get/time_limited_aliases/all")
     return h
 
 
 def time_limited_alias_create(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("time_limited_alias_create", args):
-            async with ctx.client() as c:
-                return await c.post(
+            return await ctx.client.post(
                     "/api/v1/add/time_limited_alias",
                     {
                         "address": args["address"],
@@ -380,8 +370,7 @@ def time_limited_alias_create(ctx: AdminContext) -> ToolHandler:
 def app_password_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("app_password_list", args):
-            async with ctx.client() as c:
-                data = await c.get(f"/api/v1/get/app-passwd/all/{args['email']}")
+            data = await ctx.client.get(f"/api/v1/get/app-passwd/all/{args['email']}")
             if isinstance(data, list):
                 for p in data:
                     if "password" in p:
@@ -405,8 +394,7 @@ def app_password_create(ctx: AdminContext) -> ToolHandler:
                 "protocols": protocols,
                 "active": 1,
             }
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/app-passwd", payload)
+            return await ctx.client.post("/api/v1/add/app-passwd", payload)
     return h
 
 
@@ -414,8 +402,7 @@ def app_password_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "app_password_delete")
         with ctx.audit.trace("app_password_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/app-passwd", [str(args["id"])])
+            return await ctx.client.post("/api/v1/delete/app-passwd", [str(args["id"])])
     return h
 
 
@@ -426,18 +413,16 @@ def app_password_delete(ctx: AdminContext) -> ToolHandler:
 def dkim_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("dkim_list", args):
-            async with ctx.client() as c:
-                if "domain" in args:
-                    return await c.get(f"/api/v1/get/dkim/{args['domain']}")
-                return await c.get("/api/v1/get/dkim/all")
+            if "domain" in args:
+                return await ctx.client.get(f"/api/v1/get/dkim/{args['domain']}")
+            return await ctx.client.get("/api/v1/get/dkim/all")
     return h
 
 
 def dkim_create(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("dkim_create", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/dkim", {
+            return await ctx.client.post("/api/v1/add/dkim", {
                     "dkim_selector": args.get("selector", "dkim"),
                     "domains": args["domain"],
                     "key_size": args.get("key_size_bits", 2048),
@@ -448,8 +433,7 @@ def dkim_create(ctx: AdminContext) -> ToolHandler:
 def dkim_duplicate(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("dkim_duplicate", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/dkim_duplicate", {
+            return await ctx.client.post("/api/v1/add/dkim_duplicate", {
                     "from_domain": args["from_domain"],
                     "to_domain": args["to_domain"],
                 })
@@ -460,8 +444,7 @@ def dkim_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "dkim_delete")
         with ctx.audit.trace("dkim_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/dkim", [args["domain"]])
+            return await ctx.client.post("/api/v1/delete/dkim", [args["domain"]])
     return h
 
 
@@ -472,16 +455,14 @@ def dkim_delete(ctx: AdminContext) -> ToolHandler:
 def bcc_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("bcc_list", args):
-            async with ctx.client() as c:
-                return await c.get("/api/v1/get/bcc/all")
+            return await ctx.client.get("/api/v1/get/bcc/all")
     return h
 
 
 def bcc_create(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("bcc_create", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/bcc", {
+            return await ctx.client.post("/api/v1/add/bcc", {
                     "local_dest": args["local_dest"],
                     "bcc_dest": args["bcc_dest"],
                     "type": args["type"],
@@ -494,8 +475,7 @@ def bcc_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "bcc_delete")
         with ctx.audit.trace("bcc_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/bcc", [str(args["id"])])
+            return await ctx.client.post("/api/v1/delete/bcc", [str(args["id"])])
     return h
 
 
@@ -506,16 +486,14 @@ def bcc_delete(ctx: AdminContext) -> ToolHandler:
 def recipient_map_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("recipient_map_list", args):
-            async with ctx.client() as c:
-                return await c.get("/api/v1/get/recipient_map/all")
+            return await ctx.client.get("/api/v1/get/recipient_map/all")
     return h
 
 
 def recipient_map_create(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("recipient_map_create", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/recipient_map", {
+            return await ctx.client.post("/api/v1/add/recipient_map", {
                     "recipient_map_old": args["old_dest"],
                     "recipient_map_new": args["new_dest"],
                     "active": _b(args.get("active", True)),
@@ -527,8 +505,7 @@ def recipient_map_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "recipient_map_delete")
         with ctx.audit.trace("recipient_map_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/recipient_map", [str(args["id"])])
+            return await ctx.client.post("/api/v1/delete/recipient_map", [str(args["id"])])
     return h
 
 
@@ -539,8 +516,7 @@ def recipient_map_delete(ctx: AdminContext) -> ToolHandler:
 def transport_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("transport_list", args):
-            async with ctx.client() as c:
-                return await c.get("/api/v1/get/transport/all")
+            return await ctx.client.get("/api/v1/get/transport/all")
     return h
 
 
@@ -554,8 +530,7 @@ def transport_create(ctx: AdminContext) -> ToolHandler:
                 "password": args.get("password", ""),
                 "active": _b(args.get("active", True)),
             }
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/transport", payload)
+            return await ctx.client.post("/api/v1/add/transport", payload)
     return h
 
 
@@ -563,8 +538,7 @@ def transport_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "transport_delete")  # mail routing-critical
         with ctx.audit.trace("transport_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/transport", [str(args["id"])])
+            return await ctx.client.post("/api/v1/delete/transport", [str(args["id"])])
     return h
 
 
@@ -575,8 +549,7 @@ def transport_delete(ctx: AdminContext) -> ToolHandler:
 def relayhost_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("relayhost_list", args):
-            async with ctx.client() as c:
-                return await c.get("/api/v1/get/relayhost/all")
+            return await ctx.client.get("/api/v1/get/relayhost/all")
     return h
 
 
@@ -589,8 +562,7 @@ def relayhost_create(ctx: AdminContext) -> ToolHandler:
                 "password": args.get("password", ""),
                 "active": _b(args.get("active", True)),
             }
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/relayhost", payload)
+            return await ctx.client.post("/api/v1/add/relayhost", payload)
     return h
 
 
@@ -598,8 +570,7 @@ def relayhost_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "relayhost_delete")  # mail routing-critical
         with ctx.audit.trace("relayhost_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/relayhost", [str(args["id"])])
+            return await ctx.client.post("/api/v1/delete/relayhost", [str(args["id"])])
     return h
 
 
@@ -610,8 +581,7 @@ def relayhost_delete(ctx: AdminContext) -> ToolHandler:
 def tls_policy_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("tls_policy_list", args):
-            async with ctx.client() as c:
-                return await c.get("/api/v1/get/tls-policy-map/all")
+            return await ctx.client.get("/api/v1/get/tls-policy-map/all")
     return h
 
 
@@ -624,8 +594,7 @@ def tls_policy_create(ctx: AdminContext) -> ToolHandler:
                 "parameters": args.get("parameters", ""),
                 "active": _b(args.get("active", True)),
             }
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/tls-policy-map", payload)
+            return await ctx.client.post("/api/v1/add/tls-policy-map", payload)
     return h
 
 
@@ -633,8 +602,7 @@ def tls_policy_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "tls_policy_delete")
         with ctx.audit.trace("tls_policy_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/tls-policy-map", [str(args["id"])])
+            return await ctx.client.post("/api/v1/delete/tls-policy-map", [str(args["id"])])
     return h
 
 
@@ -645,16 +613,14 @@ def tls_policy_delete(ctx: AdminContext) -> ToolHandler:
 def forward_host_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("forward_host_list", args):
-            async with ctx.client() as c:
-                return await c.get("/api/v1/get/fwdhost/all")
+            return await ctx.client.get("/api/v1/get/fwdhost/all")
     return h
 
 
 def forward_host_create(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("forward_host_create", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/fwdhost", {
+            return await ctx.client.post("/api/v1/add/fwdhost", {
                     "hostname": args["hostname"],
                     "filter_spam": _b(args.get("filter_spam", False)),
                     "keep_spam": _b(args.get("keep_spam", False)),
@@ -666,8 +632,7 @@ def forward_host_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "forward_host_delete")
         with ctx.audit.trace("forward_host_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/fwdhost", [args["hostname"]])
+            return await ctx.client.post("/api/v1/delete/fwdhost", [args["hostname"]])
     return h
 
 
@@ -678,11 +643,10 @@ def forward_host_delete(ctx: AdminContext) -> ToolHandler:
 def sync_job_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("sync_job_list", args):
-            async with ctx.client() as c:
-                data = await c.get("/api/v1/get/syncjobs/all/no_log")
-                if isinstance(data, list) and args.get("mailbox"):
-                    data = [j for j in data if j.get("user2") == args["mailbox"]]
-                return data
+            data = await ctx.client.get("/api/v1/get/syncjobs/all/no_log")
+            if isinstance(data, list) and args.get("mailbox"):
+                data = [j for j in data if j.get("user2") == args["mailbox"]]
+            return data
     return h
 
 
@@ -712,8 +676,7 @@ def sync_job_create(ctx: AdminContext) -> ToolHandler:
                 "subscribeall": _b(args.get("subscribeall", False)),
                 "active": _b(args.get("active", True)),
             }
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/syncjob", payload)
+            return await ctx.client.post("/api/v1/add/syncjob", payload)
     return h
 
 
@@ -724,8 +687,7 @@ def sync_job_update(ctx: AdminContext) -> ToolHandler:
             if "mins_interval" in args: attr["mins_interval"] = args["mins_interval"]
             if "active" in args: attr["active"] = _b(args["active"])
             if "password" in args: attr["password1"] = args["password"]
-            async with ctx.client() as c:
-                return await c.post("/api/v1/edit/syncjob", {"items": [str(args["id"])], "attr": attr})
+            return await ctx.client.post("/api/v1/edit/syncjob", {"items": [str(args["id"])], "attr": attr})
     return h
 
 
@@ -733,8 +695,7 @@ def sync_job_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "sync_job_delete")
         with ctx.audit.trace("sync_job_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/syncjob", [str(args["id"])])
+            return await ctx.client.post("/api/v1/delete/syncjob", [str(args["id"])])
     return h
 
 
@@ -745,8 +706,7 @@ def sync_job_delete(ctx: AdminContext) -> ToolHandler:
 def resource_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("resource_list", args):
-            async with ctx.client() as c:
-                return await c.get("/api/v1/get/resource/all")
+            return await ctx.client.get("/api/v1/get/resource/all")
     return h
 
 
@@ -754,8 +714,7 @@ def resource_create(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("resource_create", args):
             mb = args.get("multiple_bookings", 0)
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/resource", {
+            return await ctx.client.post("/api/v1/add/resource", {
                     "name": args["name"],
                     "domain": args["domain"],
                     "description": args.get("description", ""),
@@ -772,8 +731,7 @@ def resource_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "resource_delete")
         with ctx.audit.trace("resource_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/resource", [args["name"]])
+            return await ctx.client.post("/api/v1/delete/resource", [args["name"]])
     return h
 
 
@@ -784,16 +742,14 @@ def resource_delete(ctx: AdminContext) -> ToolHandler:
 def oauth2_client_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("oauth2_client_list", args):
-            async with ctx.client() as c:
-                return await c.get("/api/v1/get/oauth2-client/all")
+            return await ctx.client.get("/api/v1/get/oauth2-client/all")
     return h
 
 
 def oauth2_client_create(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("oauth2_client_create", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/oauth2-client", {
+            return await ctx.client.post("/api/v1/add/oauth2-client", {
                     "redirect_uri": args["redirect_uri"],
                     "grant_types": args.get("grant_types", "authorization_code refresh_token"),
                     "scope": args.get("scope", "profile"),
@@ -805,8 +761,7 @@ def oauth2_client_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "oauth2_client_delete")  # breaks integrations
         with ctx.audit.trace("oauth2_client_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/oauth2-client", [str(args["id"])])
+            return await ctx.client.post("/api/v1/delete/oauth2-client", [str(args["id"])])
     return h
 
 
@@ -817,16 +772,14 @@ def oauth2_client_delete(ctx: AdminContext) -> ToolHandler:
 def domain_admin_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("domain_admin_list", args):
-            async with ctx.client() as c:
-                return await c.get("/api/v1/get/domain-admin/all")
+            return await ctx.client.get("/api/v1/get/domain-admin/all")
     return h
 
 
 def domain_admin_create(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("domain_admin_create", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/domain-admin", {
+            return await ctx.client.post("/api/v1/add/domain-admin", {
                     "username": args["username"],
                     "domains": ",".join(args["domains"]) if isinstance(args["domains"], list) else args["domains"],
                     "password": args["password"],
@@ -846,16 +799,14 @@ def domain_admin_update(ctx: AdminContext) -> ToolHandler:
                 attr["password"] = args["password"]
                 attr["password2"] = args["password"]
             if "active" in args: attr["active"] = _b(args["active"])
-            async with ctx.client() as c:
-                return await c.post("/api/v1/edit/domain-admin", {"items": [args["username"]], "attr": attr})
+            return await ctx.client.post("/api/v1/edit/domain-admin", {"items": [args["username"]], "attr": attr})
     return h
 
 
 def domain_admin_set_acl(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("domain_admin_set_acl", args):
-            async with ctx.client() as c:
-                return await c.post(
+            return await ctx.client.post(
                     "/api/v1/edit/da-acl",
                     {"items": [args["username"]], "attr": {"domain_admin_acl": args["acl"]}},
                 )
@@ -866,16 +817,14 @@ def domain_admin_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "domain_admin_delete")
         with ctx.audit.trace("domain_admin_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/domain-admin", [args["username"]])
+            return await ctx.client.post("/api/v1/delete/domain-admin", [args["username"]])
     return h
 
 
 def domain_admin_sso_token(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("domain_admin_sso_token", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/sso/domain-admin", {"username": args["username"]})
+            return await ctx.client.post("/api/v1/add/sso/domain-admin", {"username": args["username"]})
     return h
 
 
@@ -886,24 +835,21 @@ def domain_admin_sso_token(ctx: AdminContext) -> ToolHandler:
 def domain_policy_list_blacklist(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("domain_policy_list_blacklist", args):
-            async with ctx.client() as c:
-                return await c.get(f"/api/v1/get/policy_bl_domain/{args['domain']}")
+            return await ctx.client.get(f"/api/v1/get/policy_bl_domain/{args['domain']}")
     return h
 
 
 def domain_policy_list_whitelist(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("domain_policy_list_whitelist", args):
-            async with ctx.client() as c:
-                return await c.get(f"/api/v1/get/policy_wl_domain/{args['domain']}")
+            return await ctx.client.get(f"/api/v1/get/policy_wl_domain/{args['domain']}")
     return h
 
 
 def domain_policy_create(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("domain_policy_create", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/add/domain-policy", {
+            return await ctx.client.post("/api/v1/add/domain-policy", {
                     "domain": args["domain"],
                     "object_list": args["object_list"],
                     "object_from": args["object_from"],
@@ -915,8 +861,7 @@ def domain_policy_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "domain_policy_delete")
         with ctx.audit.trace("domain_policy_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/domain-policy", [str(args["id"])])
+            return await ctx.client.post("/api/v1/delete/domain-policy", [str(args["id"])])
     return h
 
 
@@ -927,16 +872,14 @@ def domain_policy_delete(ctx: AdminContext) -> ToolHandler:
 def quarantine_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("quarantine_list", args):
-            async with ctx.client() as c:
-                return await c.get("/api/v1/get/quarantine/all")
+            return await ctx.client.get("/api/v1/get/quarantine/all")
     return h
 
 
 def quarantine_release(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("quarantine_release", args):
-            async with ctx.client() as c:
-                return await c.post(
+            return await ctx.client.post(
                     "/api/v1/edit/qitem",
                     {"items": [str(i) for i in args["ids"]], "attr": {"action": "release"}},
                 )
@@ -946,8 +889,7 @@ def quarantine_release(ctx: AdminContext) -> ToolHandler:
 def quarantine_learn_spam(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("quarantine_learn_spam", args):
-            async with ctx.client() as c:
-                return await c.post(
+            return await ctx.client.post(
                     "/api/v1/edit/qitem",
                     {"items": [str(i) for i in args["ids"]], "attr": {"action": "learnspam"}},
                 )
@@ -958,8 +900,7 @@ def quarantine_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "quarantine_delete")
         with ctx.audit.trace("quarantine_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/qitem", [str(i) for i in args["ids"]])
+            return await ctx.client.post("/api/v1/delete/qitem", [str(i) for i in args["ids"]])
     return h
 
 
@@ -967,8 +908,7 @@ def quarantine_set_notification(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("quarantine_set_notification", args):
             attr = {k: v for k, v in args.items() if k != "items"}
-            async with ctx.client() as c:
-                return await c.post(
+            return await ctx.client.post(
                     "/api/v1/edit/quarantine_notification",
                     {"items": ["all"], "attr": attr},
                 )
@@ -982,16 +922,14 @@ def quarantine_set_notification(ctx: AdminContext) -> ToolHandler:
 def queue_list(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("queue_list", args):
-            async with ctx.client() as c:
-                return await c.get("/api/v1/get/mailq/all")
+            return await ctx.client.get("/api/v1/get/mailq/all")
     return h
 
 
 def queue_flush(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("queue_flush", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/edit/mailq", {"items": ["flush"]})
+            return await ctx.client.post("/api/v1/edit/mailq", {"items": ["flush"]})
     return h
 
 
@@ -999,8 +937,7 @@ def queue_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         _require_confirm(args, "queue_delete")
         with ctx.audit.trace("queue_delete", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/delete/mailq", args["queue_ids"])
+            return await ctx.client.post("/api/v1/delete/mailq", args["queue_ids"])
     return h
 
 
@@ -1011,8 +948,7 @@ def queue_delete(ctx: AdminContext) -> ToolHandler:
 def fail2ban_get(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("fail2ban_get", args):
-            async with ctx.client() as c:
-                return await c.get("/api/v1/get/fail2ban")
+            return await ctx.client.get("/api/v1/get/fail2ban")
     return h
 
 
@@ -1027,8 +963,7 @@ def fail2ban_update(ctx: AdminContext) -> ToolHandler:
                 ("manage_external", "manage_external"),
             ]:
                 if k_in in args: attr[k_api] = args[k_in]
-            async with ctx.client() as c:
-                return await c.post("/api/v1/edit/fail2ban", {"items": ["none"], "attr": attr})
+            return await ctx.client.post("/api/v1/edit/fail2ban", {"items": ["none"], "attr": attr})
     return h
 
 
@@ -1036,8 +971,7 @@ def fail2ban_unban(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("fail2ban_unban", args):
             # unban via the edit endpoint with action=unban
-            async with ctx.client() as c:
-                return await c.post(
+            return await ctx.client.post(
                     "/api/v1/edit/fail2ban",
                     {"items": ["none"], "attr": {"action": "unban", "network": args["ip"]}},
                 )
@@ -1051,16 +985,14 @@ def fail2ban_unban(ctx: AdminContext) -> ToolHandler:
 def ratelimit_get_mailbox(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("ratelimit_get_mailbox", args):
-            async with ctx.client() as c:
-                return await c.get(f"/api/v1/get/rl-mbox/{args['email']}")
+            return await ctx.client.get(f"/api/v1/get/rl-mbox/{args['email']}")
     return h
 
 
 def ratelimit_set_mailbox(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("ratelimit_set_mailbox", args):
-            async with ctx.client() as c:
-                return await c.post(
+            return await ctx.client.post(
                     "/api/v1/edit/rl-mbox/",
                     {
                         "items": [args["email"]],
@@ -1073,16 +1005,14 @@ def ratelimit_set_mailbox(ctx: AdminContext) -> ToolHandler:
 def ratelimit_get_domain(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("ratelimit_get_domain", args):
-            async with ctx.client() as c:
-                return await c.get(f"/api/v1/get/rl-domain/{args['domain']}")
+            return await ctx.client.get(f"/api/v1/get/rl-domain/{args['domain']}")
     return h
 
 
 def ratelimit_set_domain(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("ratelimit_set_domain", args):
-            async with ctx.client() as c:
-                return await c.post(
+            return await ctx.client.post(
                     "/api/v1/edit/rl-domain/",
                     {
                         "items": [args["domain"]],
@@ -1099,17 +1029,15 @@ def ratelimit_set_domain(ctx: AdminContext) -> ToolHandler:
 def spam_score_get(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("spam_score_get", args):
-            async with ctx.client() as c:
-                target = args.get("email", "all")
-                return await c.get(f"/api/v1/get/spam-score/{target}")
+            target = args.get("email", "all")
+            return await ctx.client.get(f"/api/v1/get/spam-score/{target}")
     return h
 
 
 def spam_score_set(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("spam_score_set", args):
-            async with ctx.client() as c:
-                return await c.post(
+            return await ctx.client.post(
                     "/api/v1/edit/spam-score/",
                     {
                         "items": [args["email"]],
@@ -1131,16 +1059,14 @@ def cors_settings_update(ctx: AdminContext) -> ToolHandler:
             attr: dict[str, Any] = {}
             if "allowed_origins" in args: attr["allowed_origins"] = args["allowed_origins"]
             if "allowed_methods" in args: attr["allowed_methods"] = args["allowed_methods"]
-            async with ctx.client() as c:
-                return await c.post("/api/v1/edit/cors", {"attr": attr})
+            return await ctx.client.post("/api/v1/edit/cors", {"attr": attr})
     return h
 
 
 def identity_provider_settings_update(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("identity_provider_settings_update", args):
-            async with ctx.client() as c:
-                return await c.post("/api/v1/edit/identity-provider", args)
+            return await ctx.client.post("/api/v1/edit/identity-provider", args)
     return h
 
 
@@ -1149,8 +1075,7 @@ def pushover_set(ctx: AdminContext) -> ToolHandler:
         with ctx.audit.trace("pushover_set", args):
             attr = {k: v for k, v in args.items() if k != "email"}
             attr["active"] = _b(attr.get("active", True))
-            async with ctx.client() as c:
-                return await c.post(
+            return await ctx.client.post(
                     "/api/v1/edit/pushover",
                     {"items": [args["email"]], "attr": attr},
                 )
@@ -1166,8 +1091,7 @@ def _logs_get_factory(name: str, mailcow_path: str) -> Callable[[AdminContext], 
         async def h(args: dict[str, Any]) -> Any:
             with ctx.audit.trace(name, args):
                 lines = min(int(args.get("lines", 100)), 5000)
-                async with ctx.client() as c:
-                    return await c.get(f"/api/v1/get/logs/{mailcow_path}/{lines}")
+                return await ctx.client.get(f"/api/v1/get/logs/{mailcow_path}/{lines}")
         return h
     return factory
 
@@ -1191,24 +1115,21 @@ logs_get_ratelimit = _logs_get_factory("logs_get_ratelimit", "ratelimited")
 def server_version(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("server_version", args):
-            async with ctx.client() as c:
-                return await c.get("/api/v1/get/status/version")
+            return await ctx.client.get("/api/v1/get/status/version")
     return h
 
 
 def server_containers_status(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("server_containers_status", args):
-            async with ctx.client() as c:
-                return await c.get("/api/v1/get/status/containers")
+            return await ctx.client.get("/api/v1/get/status/containers")
     return h
 
 
 def server_vmail_status(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("server_vmail_status", args):
-            async with ctx.client() as c:
-                return await c.get("/api/v1/get/status/vmail")
+            return await ctx.client.get("/api/v1/get/status/vmail")
     return h
 
 
@@ -1219,22 +1140,21 @@ def server_status_summary(ctx: AdminContext) -> ToolHandler:
     """
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("server_status_summary", args):
-            async with ctx.client() as c:
-                version = await c.get("/api/v1/get/status/version")
-                containers = await c.get("/api/v1/get/status/containers")
-                vmail = await c.get("/api/v1/get/status/vmail")
-                # Best-effort fetches: don't fail the whole summary if one
-                # endpoint hiccups. Mailcow may return errors here under load.
-                queue: Any = None
-                fail2ban: Any = None
-                try:
-                    queue = await c.get("/api/v1/get/mailq/all")
-                except Exception:
-                    queue = None
-                try:
-                    fail2ban = await c.get("/api/v1/get/fail2ban")
-                except Exception:
-                    fail2ban = None
+            version = await ctx.client.get("/api/v1/get/status/version")
+            containers = await ctx.client.get("/api/v1/get/status/containers")
+            vmail = await ctx.client.get("/api/v1/get/status/vmail")
+            # Best-effort fetches: don't fail the whole summary if one
+            # endpoint hiccups. Mailcow may return errors here under load.
+            queue: Any = None
+            fail2ban: Any = None
+            try:
+                queue = await ctx.client.get("/api/v1/get/mailq/all")
+            except Exception:
+                queue = None
+            try:
+                fail2ban = await ctx.client.get("/api/v1/get/fail2ban")
+            except Exception:
+                fail2ban = None
 
             cdict: dict[str, Any] = containers if isinstance(containers, dict) else {}
             running = sum(

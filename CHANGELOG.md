@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0-alpha] - 2026-05-03
+
+Last big refactor before v1.0. Addresses the lone P0 left from Shadow's
+cycle 1 report: `alias_delete` 30s timeout that froze the MCP until restart.
+
+### Changed (breaking-ish, internal only)
+- **Persistent `MailcowClient`** at the lifetime of the MCP server, replacing
+  the per-call instantiation pattern (previously `async with ctx.client()
+  as c` for every tool). The client is built once at boot, shared by all
+  tool invocations, and explicitly closed at server shutdown.
+  - **Why** : per-call clients meant a TLS handshake on every request
+    (overhead) and left the asyncio loop in a bad state after a httpx
+    timeout, freezing stdio communication until the subprocess was killed
+    (Shadow E2E cycle 1 P0). The persistent pattern fixes both.
+  - **API change** : `build_user_registry` and `build_admin_registry` now
+    return `(registry, ctx)` instead of just `registry`. Callers are
+    expected to invoke `await ctx.aclose()` at shutdown. Same on TS side
+    (`{registry, ctx}` object).
+  - **Recovery** : on transient `httpx.TimeoutException` /
+    `httpx.NetworkError`, the client is force-closed and rebuilt
+    transparently on the next call. No more zombie subprocess.
+- **Default API timeout 30s → 60s**. Mailcow list endpoints can be slow
+  on busy instances. Override via `MCP_MAILCOW_API_TIMEOUT` (Python) /
+  `MCP_MAILCOW_API_TIMEOUT_MS` (TypeScript).
+
+### Migration notes
+- Internal API change only. Users running `mcp-mailcow --mode user|admin`
+  are not affected. Anyone embedding `build_*_registry()` directly needs
+  to update the unpacking : `registry, ctx = build_admin_registry(...)`.
+
 ## [0.3.1-alpha] - 2026-05-03
 
 Patches sur les findings du cycle 2 Shadow E2E (rapport-cycle2-mcp-mailcow.md).

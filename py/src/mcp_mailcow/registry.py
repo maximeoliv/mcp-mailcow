@@ -3,7 +3,9 @@
 Handlers live in user_tools.py and admin_tools.py. This module wires them
 together with the config and audit logger.
 
-Stubs only for now — implementations to be filled in tools modules.
+Returns a ``(registry, context)`` tuple. The context owns persistent
+resources (the Mailcow API client in admin mode) and must be closed at
+server shutdown.
 """
 
 from __future__ import annotations
@@ -17,13 +19,20 @@ from .config import AdminConfig, UserConfig
 ToolHandler = Callable[[dict[str, Any]], Awaitable[Any]]
 
 
-def build_user_registry(config: UserConfig, audit: AuditLogger) -> dict[str, ToolHandler]:
-    """Build the user-mode tool registry (IMAP/SMTP)."""
+def build_user_registry(
+    config: UserConfig, audit: AuditLogger
+) -> tuple[dict[str, ToolHandler], Any]:
+    """Build the user-mode tool registry (IMAP/SMTP).
+
+    Returns ``(registry, ctx)``. The user-mode context has nothing to
+    close (IMAP sessions are short-lived per call), but we return it for
+    a uniform API with admin mode.
+    """
     from . import user_tools as ut
 
     ctx = ut.UserContext(config=config, audit=audit)
 
-    return {
+    registry = {
         # mailbox.read
         "list_inbox": ut.list_inbox(ctx),
         "read_message": ut.read_message(ctx),
@@ -50,15 +59,23 @@ def build_user_registry(config: UserConfig, audit: AuditLogger) -> dict[str, Too
         "move_message": ut.move_message(ctx),
         "delete_message": ut.delete_message(ctx),
     }
+    return registry, ctx
 
 
-def build_admin_registry(config: AdminConfig, audit: AuditLogger) -> dict[str, ToolHandler]:
-    """Build the admin-mode tool registry (Mailcow REST API)."""
+def build_admin_registry(
+    config: AdminConfig, audit: AuditLogger
+) -> tuple[dict[str, ToolHandler], Any]:
+    """Build the admin-mode tool registry (Mailcow REST API).
+
+    Returns ``(registry, ctx)``. The admin context owns a persistent
+    ``MailcowClient``; the caller must invoke ``await ctx.aclose()`` at
+    server shutdown.
+    """
     from . import admin_tools as at
 
     ctx = at.AdminContext(config=config, audit=audit)
 
-    return {
+    registry = {
         # domain
         "domain_list": at.domain_list(ctx),
         "domain_create": at.domain_create(ctx),
@@ -189,3 +206,4 @@ def build_admin_registry(config: AdminConfig, audit: AuditLogger) -> dict[str, T
         # delivery
         "send_test_mail": at.send_test_mail(ctx),
     }
+    return registry, ctx

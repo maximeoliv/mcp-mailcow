@@ -38,11 +38,18 @@ class UserConfig:
 
 @dataclass(frozen=True)
 class AdminConfig:
-    """Config for admin mode (Mailcow REST API)."""
+    """Config for admin mode (Mailcow REST API).
+
+    `api_timeout` controls how long a single HTTP request can hang before
+    httpx aborts. Default 60s (was 30s in v0.3 — bumped because Mailcow
+    list endpoints can be slow on busy instances). Override via
+    ``MCP_MAILCOW_API_TIMEOUT`` env var.
+    """
 
     base_url: str
     api_key: str
     tls_verify: bool = True
+    api_timeout: float = 60.0
     audit_log: Path = DEFAULT_AUDIT_LOG
 
 
@@ -86,5 +93,6 @@ def load_admin_config() -> AdminConfig:
         base_url=_require("MAILCOW_ADMIN_URL").rstrip("/"),
         api_key=_require("MAILCOW_ADMIN_API_KEY"),
         tls_verify=_bool_env("MCP_MAILCOW_TLS_VERIFY", True),
+        api_timeout=float(os.environ.get("MCP_MAILCOW_API_TIMEOUT", "60")),
         audit_log=_path_env("MCP_MAILCOW_AUDIT_LOG", DEFAULT_AUDIT_LOG),
     )

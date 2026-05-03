@@ -8,17 +8,22 @@ import * as h from "./handlers.js";
 
 type Handler = (args: unknown) => Promise<unknown>;
 
+export interface UserRegistryBuild {
+  registry: Record<string, Handler>;
+  ctx: h.UserContext;
+}
+
 export function buildUserRegistry(
   config: UserConfig,
   audit: AuditLogger,
-): Record<string, Handler> {
+): UserRegistryBuild {
   const ctx = h.makeContext(config, audit);
   const wrap = (factory: (c: h.UserContext) => h.Handler): Handler => {
     const fn = factory(ctx);
     return (args: unknown) => fn((args as Record<string, unknown>) ?? {});
   };
 
-  return {
+  const registry: Record<string, Handler> = {
     // mailbox.read
     list_inbox: wrap(h.list_inbox),
     read_message: wrap(h.read_message),
@@ -45,4 +50,5 @@ export function buildUserRegistry(
     move_message: wrap(h.move_message),
     delete_message: wrap(h.delete_message),
   };
+  return { registry, ctx };
 }

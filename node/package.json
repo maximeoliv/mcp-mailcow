@@ -1,6 +1,6 @@
 {
   "name": "mcp-mailcow",
-  "version": "0.3.1-alpha.0",
+  "version": "0.4.0-alpha.0",
   "description": "Model Context Protocol server for Mailcow — read/send mail and manage your Mailcow server from Claude",
   "keywords": [
     "mcp",
