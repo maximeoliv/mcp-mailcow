@@ -169,13 +169,16 @@ export const mailbox_update = (ctx: AdminContext): Handler => async (args) =>
     return ctx.client().post("/api/v1/edit/mailbox", { items: [args.email], attr });
   });
 
-export const mailbox_set_password = (ctx: AdminContext): Handler => async (args) =>
-  ctx.audit.trace("mailbox_set_password", args, async () =>
+export const mailbox_set_password = (ctx: AdminContext): Handler => async (args) => {
+  // Resetting a mailbox password kicks the user out — destructive.
+  requireConfirm(args, "mailbox_set_password");
+  return ctx.audit.trace("mailbox_set_password", args, async () =>
     ctx.client().post("/api/v1/edit/mailbox", {
       items: [args.email],
       attr: { password: args.password, password2: args.password },
     }),
   );
+};
 
 export const mailbox_delete = (ctx: AdminContext): Handler => async (args) => {
   requireConfirm(args, "mailbox_delete");
@@ -342,10 +345,12 @@ export const app_password_create = (ctx: AdminContext): Handler => async (args) 
     });
   });
 
-export const app_password_delete = (ctx: AdminContext): Handler => async (args) =>
-  ctx.audit.trace("app_password_delete", args, async () =>
+export const app_password_delete = (ctx: AdminContext): Handler => async (args) => {
+  requireConfirm(args, "app_password_delete");
+  return ctx.audit.trace("app_password_delete", args, async () =>
     ctx.client().post("/api/v1/delete/app-passwd", [String(args.id)]),
   );
+};
 
 // ============================================================================
 // DKIM
@@ -400,18 +405,50 @@ export const server_vmail_status = (ctx: AdminContext): Handler => async (args) 
 export const server_status_summary = (ctx: AdminContext): Handler => async (args) =>
   ctx.audit.trace("server_status_summary", args, async () => {
     const c = ctx.client();
-    const [version, containers, vmail] = await Promise.all([
+    const safeGet = async (path: string) => {
+      try {
+        return await c.get(path);
+      } catch {
+        return null;
+      }
+    };
+    const [version, containers, vmail, queue, fail2ban] = await Promise.all([
       c.get("/api/v1/get/status/version"),
-      c.get("/api/v1/get/status/containers") as Promise<Record<string, { state?: string }>>,
+      c.get("/api/v1/get/status/containers"),
       c.get("/api/v1/get/status/vmail"),
+      safeGet("/api/v1/get/mailq/all"),
+      safeGet("/api/v1/get/fail2ban"),
     ]);
-    const containersDict = (containers ?? {}) as Record<string, { state?: string }>;
-    const running = Object.values(containersDict).filter((v) => v?.state === "running").length;
+    type Container = { state?: string; status?: string };
+    const containersDict = (containers ?? {}) as Record<string, Container>;
+    const values = Object.values(containersDict);
+    const running = values.filter((v) => v?.state === "running").length;
+    const healthy = values.filter(
+      (v) => v?.state === "running" && (v?.status ?? "").startsWith("healthy"),
+    ).length;
+    const down = values.filter((v) => v?.state && v.state !== "running").length;
+
+    let vmailPct: number | null = null;
+    if (vmail && typeof vmail === "object" && "used_percent" in vmail) {
+      const raw = String((vmail as { used_percent: unknown }).used_percent).replace("%", "");
+      const parsed = Number.parseFloat(raw);
+      vmailPct = Number.isNaN(parsed) ? null : parsed;
+    }
+
+    const fail2banObj = fail2ban as { active_bans?: unknown[] } | null;
+
     return {
       version,
       containers_total: Object.keys(containersDict).length,
       containers_running: running,
+      containers_healthy: healthy,
+      containers_down: down,
       vmail,
+      vmail_disk_pct: vmailPct,
+      queue_length: Array.isArray(queue) ? queue.length : null,
+      fail2ban_bans: Array.isArray(fail2banObj?.active_bans)
+        ? fail2banObj!.active_bans!.length
+        : null,
     };
   });
 
@@ -453,10 +490,12 @@ export const recipient_map_create = (ctx: AdminContext): Handler => async (args)
     }),
   );
 
-export const recipient_map_delete = (ctx: AdminContext): Handler => async (args) =>
-  ctx.audit.trace("recipient_map_delete", args, async () =>
+export const recipient_map_delete = (ctx: AdminContext): Handler => async (args) => {
+  requireConfirm(args, "recipient_map_delete");
+  return ctx.audit.trace("recipient_map_delete", args, async () =>
     ctx.client().post("/api/v1/delete/recipient_map", [String(args.id)]),
   );
+};
 
 export const transport_list = (ctx: AdminContext): Handler => async (args) =>
   ctx.audit.trace("transport_list", args, async () => ctx.client().get("/api/v1/get/transport/all"));
@@ -472,10 +511,12 @@ export const transport_create = (ctx: AdminContext): Handler => async (args) =>
     }),
   );
 
-export const transport_delete = (ctx: AdminContext): Handler => async (args) =>
-  ctx.audit.trace("transport_delete", args, async () =>
+export const transport_delete = (ctx: AdminContext): Handler => async (args) => {
+  requireConfirm(args, "transport_delete"); // mail routing-critical
+  return ctx.audit.trace("transport_delete", args, async () =>
     ctx.client().post("/api/v1/delete/transport", [String(args.id)]),
   );
+};
 
 export const relayhost_list = (ctx: AdminContext): Handler => async (args) =>
   ctx.audit.trace("relayhost_list", args, async () => ctx.client().get("/api/v1/get/relayhost/all"));
@@ -490,10 +531,12 @@ export const relayhost_create = (ctx: AdminContext): Handler => async (args) =>
     }),
   );
 
-export const relayhost_delete = (ctx: AdminContext): Handler => async (args) =>
-  ctx.audit.trace("relayhost_delete", args, async () =>
+export const relayhost_delete = (ctx: AdminContext): Handler => async (args) => {
+  requireConfirm(args, "relayhost_delete"); // mail routing-critical
+  return ctx.audit.trace("relayhost_delete", args, async () =>
     ctx.client().post("/api/v1/delete/relayhost", [String(args.id)]),
   );
+};
 
 export const tls_policy_list = (ctx: AdminContext): Handler => async (args) =>
   ctx.audit.trace("tls_policy_list", args, async () =>
@@ -510,10 +553,12 @@ export const tls_policy_create = (ctx: AdminContext): Handler => async (args) =>
     }),
   );
 
-export const tls_policy_delete = (ctx: AdminContext): Handler => async (args) =>
-  ctx.audit.trace("tls_policy_delete", args, async () =>
+export const tls_policy_delete = (ctx: AdminContext): Handler => async (args) => {
+  requireConfirm(args, "tls_policy_delete");
+  return ctx.audit.trace("tls_policy_delete", args, async () =>
     ctx.client().post("/api/v1/delete/tls-policy-map", [String(args.id)]),
   );
+};
 
 export const forward_host_list = (ctx: AdminContext): Handler => async (args) =>
   ctx.audit.trace("forward_host_list", args, async () => ctx.client().get("/api/v1/get/fwdhost/all"));
@@ -527,10 +572,12 @@ export const forward_host_create = (ctx: AdminContext): Handler => async (args) 
     }),
   );
 
-export const forward_host_delete = (ctx: AdminContext): Handler => async (args) =>
-  ctx.audit.trace("forward_host_delete", args, async () =>
+export const forward_host_delete = (ctx: AdminContext): Handler => async (args) => {
+  requireConfirm(args, "forward_host_delete");
+  return ctx.audit.trace("forward_host_delete", args, async () =>
     ctx.client().post("/api/v1/delete/fwdhost", [args.hostname]),
   );
+};
 
 // ============================================================================
 // SYNC JOBS
@@ -581,10 +628,12 @@ export const sync_job_update = (ctx: AdminContext): Handler => async (args) =>
     return ctx.client().post("/api/v1/edit/syncjob", { items: [String(args.id)], attr });
   });
 
-export const sync_job_delete = (ctx: AdminContext): Handler => async (args) =>
-  ctx.audit.trace("sync_job_delete", args, async () =>
+export const sync_job_delete = (ctx: AdminContext): Handler => async (args) => {
+  requireConfirm(args, "sync_job_delete");
+  return ctx.audit.trace("sync_job_delete", args, async () =>
     ctx.client().post("/api/v1/delete/syncjob", [String(args.id)]),
   );
+};
 
 // ============================================================================
 // RESOURCES, OAUTH2, DOMAIN ADMINS, DOMAIN POLICIES
@@ -608,10 +657,12 @@ export const resource_create = (ctx: AdminContext): Handler => async (args) =>
     });
   });
 
-export const resource_delete = (ctx: AdminContext): Handler => async (args) =>
-  ctx.audit.trace("resource_delete", args, async () =>
+export const resource_delete = (ctx: AdminContext): Handler => async (args) => {
+  requireConfirm(args, "resource_delete");
+  return ctx.audit.trace("resource_delete", args, async () =>
     ctx.client().post("/api/v1/delete/resource", [args.name]),
   );
+};
 
 export const oauth2_client_list = (ctx: AdminContext): Handler => async (args) =>
   ctx.audit.trace("oauth2_client_list", args, async () =>
@@ -627,10 +678,12 @@ export const oauth2_client_create = (ctx: AdminContext): Handler => async (args)
     }),
   );
 
-export const oauth2_client_delete = (ctx: AdminContext): Handler => async (args) =>
-  ctx.audit.trace("oauth2_client_delete", args, async () =>
+export const oauth2_client_delete = (ctx: AdminContext): Handler => async (args) => {
+  requireConfirm(args, "oauth2_client_delete"); // breaks integrations
+  return ctx.audit.trace("oauth2_client_delete", args, async () =>
     ctx.client().post("/api/v1/delete/oauth2-client", [String(args.id)]),
   );
+};
 
 export const domain_admin_list = (ctx: AdminContext): Handler => async (args) =>
   ctx.audit.trace("domain_admin_list", args, async () =>
@@ -700,10 +753,12 @@ export const domain_policy_create = (ctx: AdminContext): Handler => async (args)
     }),
   );
 
-export const domain_policy_delete = (ctx: AdminContext): Handler => async (args) =>
-  ctx.audit.trace("domain_policy_delete", args, async () =>
+export const domain_policy_delete = (ctx: AdminContext): Handler => async (args) => {
+  requireConfirm(args, "domain_policy_delete");
+  return ctx.audit.trace("domain_policy_delete", args, async () =>
     ctx.client().post("/api/v1/delete/domain-policy", [String(args.id)]),
   );
+};
 
 // ============================================================================
 // QUARANTINE, QUEUE, FAIL2BAN, RATELIMIT, SPAM, SETTINGS, LOGS

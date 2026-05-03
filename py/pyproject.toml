@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-mailcow"
-version = "1.0.0"
+version = "0.3.0a0"
 description = "Model Context Protocol server for Mailcow — read/send mail and manage your Mailcow server from Claude"
 readme = "../README.md"
 license = { text = "MIT" }
@@ -20,6 +20,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Communications :: Email",
     "Topic :: System :: Systems Administration",
 ]
@@ -53,9 +54,10 @@ mcp-mailcow = "mcp_mailcow.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_mailcow"]
-
-[tool.hatch.build.targets.wheel.shared-data]
-"../tools-schema.yaml" = "mcp_mailcow/tools-schema.yaml"
+# tools-schema.yaml lives directly inside the package now, so it ships
+# correctly in both wheel installs and `pip install -e .` editable mode.
+# A copy at the repo root remains as the source of truth and is synced
+# via the `make sync-schema` target (or manual `cp`).
 
 [tool.ruff]
 line-length = 100

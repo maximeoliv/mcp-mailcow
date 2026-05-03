@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0-alpha] - 2026-05-03
+
+Iteration based on Shadow PC end-to-end test report (`rapport-test-mcp-mailcow.md`).
+P0/P1 fixes from real-world usage; the architecture itself is unchanged.
+
+### Fixed
+- **`pip install -e .`** : `tools-schema.yaml` was packaged via hatchling
+  `shared-data` which only fires on wheel builds, so editable installs
+  crashed at first call with `FileNotFoundError`. The schema now lives
+  inside the package (`py/src/mcp_mailcow/tools-schema.yaml`) with a
+  fallback to the repo-root copy for unconventional dev setups. Both
+  wheel and editable installs now work.
+- **Missing `_require_confirm`** on 11 destructive admin tools that the
+  v0.1.0/v0.2.0 SECURITY.md promised but didn't deliver:
+  `mailbox_set_password`, `app_password_delete`, `recipient_map_delete`,
+  `transport_delete`, `relayhost_delete`, `tls_policy_delete`,
+  `forward_host_delete`, `sync_job_delete`, `resource_delete`,
+  `oauth2_client_delete`, `domain_policy_delete`. Both Python and
+  TypeScript impls are now consistent with the documented promise.
+  `transport_delete`/`relayhost_delete` (mail routing) and
+  `oauth2_client_delete` (integrations) had the highest blast radius.
+- **`server_status_summary`** now returns the full set of fields its
+  description advertises: `containers_healthy`, `containers_down`,
+  `vmail_disk_pct`, `queue_length`, `fail2ban_bans` (in addition to the
+  existing `version`, `containers_total`, `containers_running`, `vmail`).
+  Best-effort fetch on optional endpoints (returns `null` if a probe
+  hiccups) so the summary never fails the whole call.
+- **`send_message`** now sets `Date` and `Message-ID` headers explicitly
+  (Python `email.utils.formatdate()` and `make_msgid()`). Previously
+  `EmailMessage` left them blank and the response payload had an empty
+  `message_id` field. Bonus side effect: improves mail-tester score
+  (avoids `MISSING_DATE -1.396` and `MISSING_MID -0.14`).
+
+### Changed
+- `pyproject.toml` version bumped to `0.3.0a0` (was incorrectly `1.0.0`
+  in v0.1.0/v0.2.0). `node/package.json` similarly bumped to
+  `0.3.0-alpha.0`.
+- Python classifiers: added `Python :: 3.14` (works in practice on
+  Shadow's setup, was missing from the metadata).
+- pyproject `shared-data` directive removed (no longer needed since the
+  schema YAML lives inside the package).
+
+### Known issues / next iteration
+- **`alias_delete` 30s timeout + MCP freeze** under load (P0 from Shadow
+  report) — root cause involves the resolve-by-address GET before
+  delete + per-call httpx client lifecycle. Refactor to a persistent
+  `MailcowClient` is a deeper change planned for v0.4.0-alpha. As a
+  workaround, restart Claude Desktop if the admin MCP becomes
+  unresponsive after a destructive op.
+- **CI Python tests** : the GitHub Actions workflow needs `pip install -e
+  .[dev]` to pick up the schema correctly, fixed by P0 #2 above.
+
 ## [0.2.0-alpha] - 2026-05-03
 
 Iteration on v0.1.0-alpha based on review feedback (byh-dell1) and real-world

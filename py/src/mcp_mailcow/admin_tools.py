@@ -194,6 +194,9 @@ def mailbox_update(ctx: AdminContext) -> ToolHandler:
 
 def mailbox_set_password(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
+        # Resetting a mailbox password kicks the user out and is destructive
+        # (loss of access). Require explicit confirm.
+        _require_confirm(args, "mailbox_set_password")
         with ctx.audit.trace("mailbox_set_password", args):
             async with ctx.client() as c:
                 return await c.post(
@@ -409,6 +412,7 @@ def app_password_create(ctx: AdminContext) -> ToolHandler:
 
 def app_password_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
+        _require_confirm(args, "app_password_delete")
         with ctx.audit.trace("app_password_delete", args):
             async with ctx.client() as c:
                 return await c.post("/api/v1/delete/app-passwd", [str(args["id"])])
@@ -521,6 +525,7 @@ def recipient_map_create(ctx: AdminContext) -> ToolHandler:
 
 def recipient_map_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
+        _require_confirm(args, "recipient_map_delete")
         with ctx.audit.trace("recipient_map_delete", args):
             async with ctx.client() as c:
                 return await c.post("/api/v1/delete/recipient_map", [str(args["id"])])
@@ -556,6 +561,7 @@ def transport_create(ctx: AdminContext) -> ToolHandler:
 
 def transport_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
+        _require_confirm(args, "transport_delete")  # mail routing-critical
         with ctx.audit.trace("transport_delete", args):
             async with ctx.client() as c:
                 return await c.post("/api/v1/delete/transport", [str(args["id"])])
@@ -590,6 +596,7 @@ def relayhost_create(ctx: AdminContext) -> ToolHandler:
 
 def relayhost_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
+        _require_confirm(args, "relayhost_delete")  # mail routing-critical
         with ctx.audit.trace("relayhost_delete", args):
             async with ctx.client() as c:
                 return await c.post("/api/v1/delete/relayhost", [str(args["id"])])
@@ -624,6 +631,7 @@ def tls_policy_create(ctx: AdminContext) -> ToolHandler:
 
 def tls_policy_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
+        _require_confirm(args, "tls_policy_delete")
         with ctx.audit.trace("tls_policy_delete", args):
             async with ctx.client() as c:
                 return await c.post("/api/v1/delete/tls-policy-map", [str(args["id"])])
@@ -656,6 +664,7 @@ def forward_host_create(ctx: AdminContext) -> ToolHandler:
 
 def forward_host_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
+        _require_confirm(args, "forward_host_delete")
         with ctx.audit.trace("forward_host_delete", args):
             async with ctx.client() as c:
                 return await c.post("/api/v1/delete/fwdhost", [args["hostname"]])
@@ -722,6 +731,7 @@ def sync_job_update(ctx: AdminContext) -> ToolHandler:
 
 def sync_job_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
+        _require_confirm(args, "sync_job_delete")
         with ctx.audit.trace("sync_job_delete", args):
             async with ctx.client() as c:
                 return await c.post("/api/v1/delete/syncjob", [str(args["id"])])
@@ -760,6 +770,7 @@ def resource_create(ctx: AdminContext) -> ToolHandler:
 
 def resource_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
+        _require_confirm(args, "resource_delete")
         with ctx.audit.trace("resource_delete", args):
             async with ctx.client() as c:
                 return await c.post("/api/v1/delete/resource", [args["name"]])
@@ -792,6 +803,7 @@ def oauth2_client_create(ctx: AdminContext) -> ToolHandler:
 
 def oauth2_client_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
+        _require_confirm(args, "oauth2_client_delete")  # breaks integrations
         with ctx.audit.trace("oauth2_client_delete", args):
             async with ctx.client() as c:
                 return await c.post("/api/v1/delete/oauth2-client", [str(args["id"])])
@@ -901,6 +913,7 @@ def domain_policy_create(ctx: AdminContext) -> ToolHandler:
 
 def domain_policy_delete(ctx: AdminContext) -> ToolHandler:
     async def h(args: dict[str, Any]) -> Any:
+        _require_confirm(args, "domain_policy_delete")
         with ctx.audit.trace("domain_policy_delete", args):
             async with ctx.client() as c:
                 return await c.post("/api/v1/delete/domain-policy", [str(args["id"])])
@@ -1200,20 +1213,66 @@ def server_vmail_status(ctx: AdminContext) -> ToolHandler:
 
 
 def server_status_summary(ctx: AdminContext) -> ToolHandler:
+    """Aggregated health snapshot — single tool call, multiple API endpoints.
+
+    Returns counts and percentages for monitoring (Prometheus-friendly shape).
+    """
     async def h(args: dict[str, Any]) -> Any:
         with ctx.audit.trace("server_status_summary", args):
             async with ctx.client() as c:
                 version = await c.get("/api/v1/get/status/version")
                 containers = await c.get("/api/v1/get/status/containers")
                 vmail = await c.get("/api/v1/get/status/vmail")
+                # Best-effort fetches: don't fail the whole summary if one
+                # endpoint hiccups. Mailcow may return errors here under load.
+                queue: Any = None
+                fail2ban: Any = None
+                try:
+                    queue = await c.get("/api/v1/get/mailq/all")
+                except Exception:
+                    queue = None
+                try:
+                    fail2ban = await c.get("/api/v1/get/fail2ban")
+                except Exception:
+                    fail2ban = None
+
+            cdict: dict[str, Any] = containers if isinstance(containers, dict) else {}
             running = sum(
-                1 for v in (containers or {}).values() if (v or {}).get("state") == "running"
+                1 for v in cdict.values() if (v or {}).get("state") == "running"
             )
+            healthy = sum(
+                1
+                for v in cdict.values()
+                if (v or {}).get("state") == "running"
+                and ((v or {}).get("status") or "").startswith("healthy")
+            )
+            down = sum(
+                1 for v in cdict.values() if (v or {}).get("state") not in ("running", None)
+            )
+
+            # vmail disk percentage — Mailcow returns "used_percent": "13%" string
+            vmail_pct: float | None = None
+            if isinstance(vmail, dict):
+                pct_str = str(vmail.get("used_percent", "")).rstrip("%")
+                try:
+                    vmail_pct = float(pct_str)
+                except ValueError:
+                    vmail_pct = None
+
             return {
                 "version": version,
-                "containers_total": len(containers or {}),
+                "containers_total": len(cdict),
                 "containers_running": running,
+                "containers_healthy": healthy,
+                "containers_down": down,
                 "vmail": vmail,
+                "vmail_disk_pct": vmail_pct,
+                "queue_length": len(queue) if isinstance(queue, list) else None,
+                "fail2ban_bans": (
+                    len(fail2ban.get("active_bans") or [])
+                    if isinstance(fail2ban, dict)
+                    else None
+                ),
             }
     return h
 

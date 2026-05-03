@@ -5,6 +5,7 @@ from __future__ import annotations
 import smtplib
 import ssl
 from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 from typing import Any
 
 from .config import UserConfig
@@ -28,6 +29,12 @@ def build_message(
     msg["From"] = sender
     msg["To"] = ", ".join(to)
     msg["Subject"] = subject
+    # Always emit Date and Message-ID. SpamAssassin penalises missing Date
+    # (-1.396) and missing Message-ID (-0.14); Postfix would normally fill
+    # them in but it's safer to set them explicitly here.
+    msg["Date"] = formatdate(localtime=True)
+    sender_domain = sender.split("@", 1)[-1] if "@" in sender else None
+    msg["Message-ID"] = make_msgid(domain=sender_domain)
     if cc:
         msg["Cc"] = ", ".join(cc)
     if bcc:
