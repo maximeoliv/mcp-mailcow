@@ -338,7 +338,10 @@ export const reply_to_message = (ctx: UserContext): Handler => async (args) =>
       body = body + quoted;
     }
 
-    const refs = [env.references, env.messageId].filter(Boolean).join(" ");
+    // imapflow's MessageEnvelopeObject doesn't expose the References header;
+    // we thread on Message-ID only (sufficient for In-Reply-To). Fetching
+    // References via parsed.headers is left for v1.1.
+    const refs = [env.messageId].filter(Boolean).join(" ");
     const messageId = await sendViaSubmission(ctx.config, {
       sender: ctx.config.mailUser,
       to: [replyAddr],
