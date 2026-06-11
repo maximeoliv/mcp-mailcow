@@ -15,6 +15,7 @@ export type Handler = (args: Args) => Promise<unknown>;
 export interface UserContext {
   config: UserConfig;
   audit: AuditLogger;
+  aclose?: () => Promise<void>;
 }
 
 export function makeContext(config: UserConfig, audit: AuditLogger): UserContext {
@@ -33,7 +34,7 @@ export const list_inbox = (ctx: UserContext): Handler => async (args) =>
     const since = args.since as string | undefined;
 
     return withImapSession(ctx.config, async (imap) => {
-      const lock = await imap.getMailboxLock(folder, { readonly: true });
+      const lock = await imap.getMailboxLock(folder, { readOnly: true });
       try {
         const search: Record<string, unknown> = unreadOnly ? { seen: false } : { all: true };
         if (since) search.since = new Date(since);
@@ -69,10 +70,10 @@ export const read_message = (ctx: UserContext): Handler => async (args) =>
     const markRead = Boolean(args.mark_read);
 
     return withImapSession(ctx.config, async (imap) => {
-      const lock = await imap.getMailboxLock(folder, { readonly: !markRead });
+      const lock = await imap.getMailboxLock(folder, { readOnly: !markRead });
       try {
         const msg = await imap.fetchOne(uid, { source: true }, { uid: true });
-        if (!msg?.source) throw new Error(`message uid=${uid} not found`);
+        if (!msg || !msg.source) throw new Error(`message uid=${uid} not found`);
         const { simpleParser } = await import("mailparser");
         const parsed = await simpleParser(msg.source);
         const result: Record<string, unknown> = {
@@ -98,10 +99,10 @@ export const get_message_raw = (ctx: UserContext): Handler => async (args) =>
     const uid = Number(args.uid);
     const folder = (args.folder as string) ?? "INBOX";
     return withImapSession(ctx.config, async (imap) => {
-      const lock = await imap.getMailboxLock(folder, { readonly: true });
+      const lock = await imap.getMailboxLock(folder, { readOnly: true });
       try {
         const msg = await imap.fetchOne(uid, { source: true }, { uid: true });
-        if (!msg?.source) throw new Error(`message uid=${uid} not found`);
+        if (!msg || !msg.source) throw new Error(`message uid=${uid} not found`);
         return { raw: msg.source.toString("utf-8") };
       } finally {
         lock.release();
@@ -132,7 +133,7 @@ export const search_messages = (ctx: UserContext): Handler => async (args) =>
     }
 
     return withImapSession(ctx.config, async (imap) => {
-      const lock = await imap.getMailboxLock(folder, { readonly: true });
+      const lock = await imap.getMailboxLock(folder, { readOnly: true });
       try {
         const uids = ((await imap.search(search, { uid: true })) as number[]) ?? [];
         const sorted = uids.sort((a, b) => b - a).slice(0, limit);
@@ -166,7 +167,8 @@ export const get_unread_count = (ctx: UserContext): Handler => async (args) =>
         return { folder: target, unread: status.unseen ?? 0, total: status.messages ?? 0 };
       }
       const out = [];
-      for await (const folder of imap.list()) {
+      const folders = await imap.list();
+      for (const folder of folders) {
         try {
           const status = await imap.status(folder.path, { unseen: true, messages: true });
           out.push({ folder: folder.path, unread: status.unseen ?? 0, total: status.messages ?? 0 });
@@ -186,10 +188,10 @@ export const download_attachment = (ctx: UserContext): Handler => async (args) =
     const maxBytes = Number(args.max_size_mb ?? 25) * 1024 * 1024;
 
     return withImapSession(ctx.config, async (imap) => {
-      const lock = await imap.getMailboxLock(folder, { readonly: true });
+      const lock = await imap.getMailboxLock(folder, { readOnly: true });
       try {
         const msg = await imap.fetchOne(uid, { source: true }, { uid: true });
-        if (!msg?.source) throw new Error(`message uid=${uid} not found`);
+        if (!msg || !msg.source) throw new Error(`message uid=${uid} not found`);
         const { simpleParser } = await import("mailparser");
         const parsed = await simpleParser(msg.source);
         for (const att of parsed.attachments ?? []) {
@@ -220,7 +222,8 @@ export const list_folders = (ctx: UserContext): Handler => async (args) =>
   ctx.audit.trace("list_folders", args, async () =>
     withImapSession(ctx.config, async (imap) => {
       const out = [];
-      for await (const f of imap.list()) {
+      const folders = await imap.list();
+      for (const f of folders) {
         out.push({ name: f.path, delimiter: f.delimiter ?? "", flags: Array.from(f.flags ?? []) });
       }
       return out;
@@ -301,10 +304,10 @@ export const reply_to_message = (ctx: UserContext): Handler => async (args) =>
     const includeQuoted = args.include_quoted !== false;
 
     const orig = await withImapSession(ctx.config, async (imap) => {
-      const lock = await imap.getMailboxLock(folder, { readonly: true });
+      const lock = await imap.getMailboxLock(folder, { readOnly: true });
       try {
         const msg = await imap.fetchOne(uid, { source: true, envelope: true }, { uid: true });
-        if (!msg?.source) throw new Error(`message uid=${uid} not found`);
+        if (!msg || !msg.source) throw new Error(`message uid=${uid} not found`);
         return msg;
       } finally {
         lock.release();
@@ -356,10 +359,10 @@ export const forward_message = (ctx: UserContext): Handler => async (args) =>
     const prefix = (args.body_prefix as string) ?? "";
 
     const { source, envelope } = await withImapSession(ctx.config, async (imap) => {
-      const lock = await imap.getMailboxLock(folder, { readonly: true });
+      const lock = await imap.getMailboxLock(folder, { readOnly: true });
       try {
         const msg = await imap.fetchOne(uid, { source: true, envelope: true }, { uid: true });
-        if (!msg?.source) throw new Error(`message uid=${uid} not found`);
+        if (!msg || !msg.source) throw new Error(`message uid=${uid} not found`);
         return { source: msg.source, envelope: msg.envelope };
       } finally {
         lock.release();
