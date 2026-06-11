@@ -31,7 +31,7 @@ describe("registry", () => {
     const expected = new Set(
       schema.tools.filter((t) => t.mode === "user").map((t) => t.name),
     );
-    const registry = buildUserRegistry(userCfg, new AuditLogger(userCfg.auditLog));
+    const { registry } = buildUserRegistry(userCfg, new AuditLogger(userCfg.auditLog));
     const actual = new Set(Object.keys(registry));
     const missing = [...expected].filter((n) => !actual.has(n));
     const extra = [...actual].filter((n) => !expected.has(n));
@@ -44,7 +44,7 @@ describe("registry", () => {
     const expected = new Set(
       schema.tools.filter((t) => t.mode === "admin").map((t) => t.name),
     );
-    const registry = buildAdminRegistry(adminCfg, new AuditLogger(adminCfg.auditLog));
+    const { registry } = buildAdminRegistry(adminCfg, new AuditLogger(adminCfg.auditLog));
     const actual = new Set(Object.keys(registry));
     const missing = [...expected].filter((n) => !actual.has(n));
     const extra = [...actual].filter((n) => !expected.has(n));
