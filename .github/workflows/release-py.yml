@@ -44,6 +44,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: py/dist
+          password: ${{ secrets.PYPI_API_TOKEN }}
 
       - name: Publish to TestPyPI (alpha/beta)
         if: contains(github.ref, '-alpha') || contains(github.ref, '-beta')
@@ -51,3 +52,4 @@ jobs:
         with:
           repository-url: https://test.pypi.org/legacy/
           packages-dir: py/dist
+          password: ${{ secrets.PYPI_API_TOKEN }}
