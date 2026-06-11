@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-06-11
+
+First stable release. Five weeks of real-world usage validation since the
+`v1.0.0-rc1` tag (2026-05-04) without regressions. Repo flipped public on
+GitHub, auto-publish to PyPI + npm via GitHub Actions on this tag.
+
+### Changed
+- Stable API surface — all 125 tools (21 user + 104 admin) are now under
+  the SemVer compatibility promise: no removals or breaking renames until
+  v2.0.0. Bug fixes and additions land as minor/patch.
+- Classifier bumped `Development Status :: 4 - Beta` → `5 - Production/Stable`
+  in `py/pyproject.toml`.
+
+### Notes
+- No code changes vs `v0.4.0-alpha`. This release is the version label
+  shift, not a feature delta — the persistent `MailcowClient` refactor
+  from `v0.4.0-alpha` was the last substantive change.
+- Roadmap for `v1.1`: Trusted Publishing OIDC (eliminate the npm GAT 90d
+  rotation), `examples/windows-setup.md` Claude Code CLI section,
+  `alias_create/delete` array-singleton unwrap.
+
 ## [0.4.0-alpha] - 2026-05-03
 
 Last big refactor before v1.0. Addresses the lone P0 left from Shadow's
