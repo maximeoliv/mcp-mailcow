@@ -47,3 +47,7 @@ demande-*.md
 forward-*.md
 broadcast-*.md
 request-*.md
+
+
+# Dev virtualenvs (mailcow machine)
+.venv-*

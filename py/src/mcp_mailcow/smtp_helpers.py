@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import smtplib
+import socket
 import ssl
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
 from typing import Any
 
 from .config import UserConfig
+
+# Resolved once at import time. Used in the X-Sent-By-Host header that
+# every outbound message carries — lets the sysadmin trace which machine
+# in the fleet sent a given mail, even when the From address is shared
+# across multiple agents.
+_HOSTNAME = socket.gethostname()
 
 
 def build_message(
@@ -35,6 +42,9 @@ def build_message(
     msg["Date"] = formatdate(localtime=True)
     sender_domain = sender.split("@", 1)[-1] if "@" in sender else None
     msg["Message-ID"] = make_msgid(domain=sender_domain)
+    # Forensic trace: which machine of the fleet sent this. Survives even
+    # when From is a shared persona mailbox used by multiple agents.
+    msg["X-Sent-By-Host"] = _HOSTNAME
     if cc:
         msg["Cc"] = ", ".join(cc)
     if bcc:

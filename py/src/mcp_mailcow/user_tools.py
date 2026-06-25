@@ -15,7 +15,7 @@ from typing import Any
 from .audit import AuditLogger
 from .config import UserConfig
 from .exceptions import ConfirmationRequired
-from .imap_helpers import imap_session, parse_full_message, parse_message_summary
+from .imap_helpers import append_to_sent, imap_session, parse_full_message, parse_message_summary
 from .smtp_helpers import build_message, send_via_submission
 
 ToolHandler = Callable[[dict[str, Any]], Awaitable[Any]]
@@ -274,7 +274,13 @@ def send_message(ctx: UserContext) -> ToolHandler:
                 attachments=args.get("attachments"),
             )
             mid = send_via_submission(ctx.config, msg)
-            return {"sent": True, "message_id": mid, "to": args["to"]}
+            appended = append_to_sent(ctx.config, msg)
+            return {
+                "sent": True,
+                "message_id": mid,
+                "to": args["to"],
+                "sent_folder_appended": appended,
+            }
     return h
 
 
@@ -335,7 +341,13 @@ def reply_to_message(ctx: UserContext) -> ToolHandler:
                 references=" ".join(filter(None, [orig.get("References", ""), orig.get("Message-ID", "")])).strip() or None,
             )
             mid = send_via_submission(ctx.config, msg)
-            return {"sent": True, "message_id": mid, "in_reply_to": orig.get("Message-ID")}
+            appended = append_to_sent(ctx.config, msg)
+            return {
+                "sent": True,
+                "message_id": mid,
+                "in_reply_to": orig.get("Message-ID"),
+                "sent_folder_appended": appended,
+            }
     return h
 
 
@@ -396,7 +408,13 @@ def forward_message(ctx: UserContext) -> ToolHandler:
                 attachments=attachments if include_attachments else None,
             )
             mid = send_via_submission(ctx.config, msg)
-            return {"sent": True, "message_id": mid, "to": args["to"]}
+            appended = append_to_sent(ctx.config, msg)
+            return {
+                "sent": True,
+                "message_id": mid,
+                "to": args["to"],
+                "sent_folder_appended": appended,
+            }
     return h
 
 

@@ -8,6 +8,7 @@ import { loadSchema, toolsForMode, toMcpTool } from "./schema.js";
 import { loadAdminConfig, loadUserConfig } from "./config.js";
 import { AuditLogger } from "./audit.js";
 import { ConfirmationRequired } from "./exceptions.js";
+import { sanitizeException } from "./secret_sanitize.js";
 import { buildAdminRegistry } from "./admin/registry.js";
 import { buildUserRegistry } from "./user/registry.js";
 
@@ -68,8 +69,9 @@ export async function runServer(mode: "user" | "admin"): Promise<void> {
             ],
           };
         }
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [{ type: "text", text: `error: ${msg}` }] };
+        // Sanitize before returning to the LLM context so that no
+        // secret embedded in an exception string can leak.
+        return { content: [{ type: "text", text: `error: ${sanitizeException(err)}` }] };
       }
     },
   );

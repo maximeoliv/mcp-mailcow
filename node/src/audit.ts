@@ -4,6 +4,7 @@
  */
 import { mkdirSync, appendFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { sanitizeText } from "./secret_sanitize.js";
 
 const SECRET_PARAM_NAMES = new Set([
   "password",
@@ -65,7 +66,7 @@ export class AuditLogger {
       return result;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.write(action, params, "err", Math.round(performance.now() - start), msg);
+      this.write(action, params, "err", Math.round(performance.now() - start), sanitizeText(msg));
       throw err;
     }
   }

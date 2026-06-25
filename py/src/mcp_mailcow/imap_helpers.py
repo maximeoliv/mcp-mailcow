@@ -8,13 +8,17 @@ flows, this could be replaced with a connection pool later.
 from __future__ import annotations
 
 import email
+import logging
 from contextlib import contextmanager
-from email.message import Message
+from datetime import datetime
+from email.message import EmailMessage, Message
 from typing import Any, Iterator
 
 from imapclient import IMAPClient
 
 from .config import UserConfig
+
+logger = logging.getLogger("mcp_mailcow.imap")
 
 
 @contextmanager
@@ -57,6 +61,58 @@ def parse_message_summary(envelope: Any, flags: tuple[bytes, ...], size: int) ->
         "size": size,
         "flags": [f.decode("ascii", errors="replace") for f in flags],
     }
+
+
+def append_to_sent(config: UserConfig, msg: EmailMessage) -> bool:
+    """APPEND a sent message into the user's Sent folder.
+
+    Best-effort: returns True on success, False on any failure (logged).
+    Failure does NOT raise — the SMTP send already succeeded by the time
+    we get here, the mail is on its way, and we don't want to surface an
+    APPEND error as if the send itself failed.
+
+    Folder detection: we look for the SPECIAL-USE \\Sent flag (RFC 6154)
+    in the LIST response. Falls back to common folder names if the server
+    doesn't advertise SPECIAL-USE (rare for modern Mailcow/Dovecot).
+    """
+    try:
+        with imap_session(config) as client:
+            sent_folder = _find_sent_folder(client)
+            if not sent_folder:
+                logger.warning("no Sent folder found, skipping APPEND")
+                return False
+            # Mark as already-read in the Sent folder, and date it now.
+            client.append(
+                sent_folder,
+                msg.as_bytes(),
+                flags=(b"\\Seen",),
+                msg_time=datetime.now(),
+            )
+            return True
+    except Exception:  # noqa: BLE001 — best-effort, never bubble up
+        logger.exception("APPEND to Sent failed (mail was sent regardless)")
+        return False
+
+
+def _find_sent_folder(client: IMAPClient) -> str | None:
+    """Return the IMAP path of the Sent folder, or None.
+
+    Prefer the SPECIAL-USE \\Sent flag (RFC 6154). Fall back to a list of
+    common folder names if no SPECIAL-USE info is available.
+    """
+    fallbacks = ("Sent", "Sent Items", "Sent Messages", "INBOX.Sent")
+    try:
+        folders = client.list_folders()
+    except Exception:  # noqa: BLE001
+        return None
+    for flags, _delim, name in folders:
+        if b"\\Sent" in flags:
+            return name
+    folder_names = {n for _f, _d, n in folders}
+    for fb in fallbacks:
+        if fb in folder_names:
+            return fb
+    return None
 
 
 def _format_addr(addrs: Any) -> str | None:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from platformdirs import user_state_dir
@@ -23,11 +23,16 @@ class UserConfig:
     `imap_host` and `smtp_host` default to `host` when not set explicitly.
     Override them only if your IMAP and SMTP submission run on different
     servers (rare — e.g. external SMTP relay in front of local IMAP).
+
+    `mail_pass` is excluded from __repr__ so it cannot leak into an
+    exception traceback, a debug print, or a log line that interpolates
+    the config object. The value is still readable via direct attribute
+    access from within the module (which is what the IMAP/SMTP helpers do).
     """
 
     host: str
     mail_user: str
-    mail_pass: str
+    mail_pass: str = field(repr=False)
     imap_host: str = ""  # falls back to `host` in load_user_config
     smtp_host: str = ""  # falls back to `host` in load_user_config
     imap_port: int = 993
@@ -44,10 +49,12 @@ class AdminConfig:
     httpx aborts. Default 60s (was 30s in v0.3 — bumped because Mailcow
     list endpoints can be slow on busy instances). Override via
     ``MCP_MAILCOW_API_TIMEOUT`` env var.
+
+    `api_key` is excluded from __repr__ (see UserConfig.mail_pass).
     """
 
     base_url: str
-    api_key: str
+    api_key: str = field(repr=False)
     tls_verify: bool = True
     api_timeout: float = 60.0
     audit_log: Path = DEFAULT_AUDIT_LOG

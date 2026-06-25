@@ -1,8 +1,34 @@
-# Windows specifics — Claude Desktop config
+# Windows specifics — Claude Desktop and Claude Code CLI
 
-The default `claude_desktop_config.json` examples assume `python` resolves to
-a real interpreter. On Windows that's not always the case — feedback from
-real-world testing on a Shadow PC running Windows 11 surfaced a few quirks.
+The default config examples assume `python` resolves to a real interpreter.
+On Windows that's not always the case — feedback from real-world testing on
+a Shadow PC running Windows 11 surfaced a few quirks. This page covers both
+Claude Desktop and Claude Code CLI (which use different config files).
+
+## Claude Desktop vs Claude Code CLI on Windows
+
+Two distinct config files, two distinct paths. Don't confuse them.
+
+| Client | Config file path |
+|---|---|
+| Claude Desktop | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Claude Code CLI | `%USERPROFILE%\.claude.json` |
+
+The JSON shape is the same (`mcpServers: {...}` at the top level), so the
+snippets below work in both files. Just point your editor at the right one.
+
+### Claude Code CLI on Windows — specifics
+
+- `%USERPROFILE%` typically resolves to `C:\Users\<You>`, so the full path
+  is `C:\Users\<You>\.claude.json`.
+- Reload after editing: in Claude Code CLI, press `Ctrl+C` then re-run
+  `claude` (or restart your terminal). MCP servers are loaded at session
+  start, not hot-reloaded.
+- The `mcpServers` block is read at boot. A syntax error in the JSON
+  prevents Claude Code from starting — validate with `python -m json.tool
+  %USERPROFILE%\.claude.json` before re-launching.
+
+
 
 ## Pitfall #1 — `command: "python"` vs Microsoft Store stub
 

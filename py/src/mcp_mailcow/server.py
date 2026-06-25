@@ -18,6 +18,7 @@ from .audit import AuditLogger
 from .config import load_admin_config, load_user_config
 from .exceptions import ConfirmationRequired
 from .schema import load_schema, to_mcp_tool, tools_for_mode
+from .secret_sanitize import sanitize_exception
 
 logger = logging.getLogger("mcp_mailcow")
 
@@ -62,8 +63,11 @@ async def run_server(mode: str) -> None:
                 )
             ]
         except Exception as e:  # surface as text error, don't crash the server
+            # Log the full traceback server-side (file is access-restricted),
+            # but only return a sanitized message to the LLM context so that
+            # no secret embedded in an exception string can leak.
             logger.exception("tool %s failed", name)
-            return [TextContent(type="text", text=f"error: {e}")]
+            return [TextContent(type="text", text=f"error: {sanitize_exception(e)}")]
         text = (
             result
             if isinstance(result, str)

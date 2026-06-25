@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from .secret_sanitize import sanitize_text
+
 # Param names whose values are masked in the audit log.
 SECRET_PARAM_NAMES = frozenset({
     "password",
@@ -81,6 +83,6 @@ class AuditLogger:
                 params=params,
                 result="err",
                 duration_ms=int((time.perf_counter() - start) * 1000),
-                error=str(e),
+                error=sanitize_text(str(e)),
             )
             raise

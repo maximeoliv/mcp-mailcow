@@ -49,28 +49,46 @@ function boolEnv(name: string, def: boolean): boolean {
   return ["1", "true", "yes", "on"].includes(v.toLowerCase());
 }
 
+/**
+ * Hide a secret-bearing property from JSON.stringify / console.log /
+ * util.inspect by making it non-enumerable. The value remains readable
+ * via direct property access (`cfg.mailPass`), which is what the IMAP
+ * and SMTP helpers do — but it never appears in a debug log or in an
+ * Error message that interpolates the config object.
+ */
+function _hideSecret<T extends object>(obj: T, prop: keyof T, value: string): void {
+  Object.defineProperty(obj, prop, {
+    value,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+}
+
 export function loadUserConfig(): UserConfig {
   const host = require_("MAILCOW_HOST");
-  return {
+  const cfg = {
     host,
     mailUser: require_("MAILCOW_MAIL_USER"),
-    mailPass: require_("MAILCOW_MAIL_PASS"),
     imapHost: process.env.MAILCOW_IMAP_HOST || host,
     smtpHost: process.env.MAILCOW_SMTP_HOST || host,
     imapPort: Number.parseInt(process.env.MAILCOW_IMAP_PORT || "993", 10),
     smtpPort: Number.parseInt(process.env.MAILCOW_SMTP_PORT || "587", 10),
     tlsVerify: boolEnv("MCP_MAILCOW_TLS_VERIFY", true),
     auditLog: process.env.MCP_MAILCOW_AUDIT_LOG || DEFAULT_AUDIT_LOG,
-  };
+  } as UserConfig;
+  _hideSecret(cfg, "mailPass", require_("MAILCOW_MAIL_PASS"));
+  return cfg;
 }
 
 export function loadAdminConfig(): AdminConfig {
-  return {
+  const cfg = {
     baseUrl: require_("MAILCOW_ADMIN_URL").replace(/\/$/, ""),
-    apiKey: require_("MAILCOW_ADMIN_API_KEY"),
     tlsVerify: boolEnv("MCP_MAILCOW_TLS_VERIFY", true),
     apiTimeoutMs:
       Number.parseInt(process.env.MCP_MAILCOW_API_TIMEOUT_MS || "60000", 10) || 60_000,
     auditLog: process.env.MCP_MAILCOW_AUDIT_LOG || DEFAULT_AUDIT_LOG,
-  };
+  } as AdminConfig;
+  _hideSecret(cfg, "apiKey", require_("MAILCOW_ADMIN_API_KEY"));
+  return cfg;
 }

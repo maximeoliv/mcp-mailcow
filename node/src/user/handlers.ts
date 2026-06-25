@@ -6,7 +6,7 @@
 import type { UserConfig } from "../config.js";
 import type { AuditLogger } from "../audit.js";
 import { ConfirmationRequired } from "../exceptions.js";
-import { withImapSession, formatAddress, formatAddresses } from "./imap_helpers.js";
+import { withImapSession, formatAddress, formatAddresses, appendToSent } from "./imap_helpers.js";
 import { sendViaSubmission } from "./smtp_helpers.js";
 
 type Args = Record<string, unknown>;
@@ -281,7 +281,7 @@ export const empty_folder = (ctx: UserContext): Handler => async (args) => {
 
 export const send_message = (ctx: UserContext): Handler => async (args) =>
   ctx.audit.trace("send_message", args, async () => {
-    const messageId = await sendViaSubmission(ctx.config, {
+    const { messageId, raw } = await sendViaSubmission(ctx.config, {
       sender: ctx.config.mailUser,
       to: args.to as string[],
       subject: args.subject as string,
@@ -293,7 +293,8 @@ export const send_message = (ctx: UserContext): Handler => async (args) =>
       inReplyTo: args.in_reply_to as string | undefined,
       attachments: args.attachments as Array<{ filename: string; content_b64: string; mime_type: string }> | undefined,
     });
-    return { sent: true, message_id: messageId, to: args.to };
+    const sentFolderAppended = await appendToSent(ctx.config, raw);
+    return { sent: true, message_id: messageId, to: args.to, sent_folder_appended: sentFolderAppended };
   });
 
 export const reply_to_message = (ctx: UserContext): Handler => async (args) =>
@@ -342,7 +343,7 @@ export const reply_to_message = (ctx: UserContext): Handler => async (args) =>
     // we thread on Message-ID only (sufficient for In-Reply-To). Fetching
     // References via parsed.headers is left for v1.1.
     const refs = [env.messageId].filter(Boolean).join(" ");
-    const messageId = await sendViaSubmission(ctx.config, {
+    const { messageId, raw } = await sendViaSubmission(ctx.config, {
       sender: ctx.config.mailUser,
       to: [replyAddr],
       subject: subj,
@@ -351,7 +352,8 @@ export const reply_to_message = (ctx: UserContext): Handler => async (args) =>
       inReplyTo: env.messageId ?? undefined,
       references: refs || undefined,
     });
-    return { sent: true, message_id: messageId, in_reply_to: env.messageId };
+    const sentFolderAppended = await appendToSent(ctx.config, raw);
+    return { sent: true, message_id: messageId, in_reply_to: env.messageId, sent_folder_appended: sentFolderAppended };
   });
 
 export const forward_message = (ctx: UserContext): Handler => async (args) =>
@@ -396,14 +398,15 @@ export const forward_message = (ctx: UserContext): Handler => async (args) =>
           }))
         : undefined;
 
-    const messageId = await sendViaSubmission(ctx.config, {
+    const { messageId, raw } = await sendViaSubmission(ctx.config, {
       sender: ctx.config.mailUser,
       to: args.to as string[],
       subject: subj,
       body,
       attachments,
     });
-    return { sent: true, message_id: messageId, to: args.to };
+    const sentFolderAppended = await appendToSent(ctx.config, raw);
+    return { sent: true, message_id: messageId, to: args.to, sent_folder_appended: sentFolderAppended };
   });
 
 export const save_draft = (ctx: UserContext): Handler => async (args) =>

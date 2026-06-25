@@ -64,3 +64,51 @@ export function formatAddresses(addrs: Array<{ name?: string; address?: string }
   if (!addrs) return [];
   return addrs.map((a) => formatAddress([a]) ?? "");
 }
+
+/**
+ * APPEND a sent message into the user's Sent folder.
+ *
+ * Best-effort: returns true on success, false on failure. Failure does
+ * NOT throw — the SMTP send already succeeded by the time we get here,
+ * the mail is on its way, and we don't want to surface an APPEND error
+ * as if the send itself failed.
+ *
+ * Folder detection: SPECIAL-USE \\Sent (RFC 6154) first, fallback to
+ * common folder names.
+ */
+export async function appendToSent(
+  config: UserConfig,
+  raw: Buffer | string,
+): Promise<boolean> {
+  try {
+    return await withImapSession(config, async (client) => {
+      const folder = await findSentFolder(client);
+      if (!folder) return false;
+      await client.append(folder, raw, ["\\Seen"], new Date());
+      return true;
+    });
+  } catch {
+    return false;
+  }
+}
+
+async function findSentFolder(client: ImapFlow): Promise<string | null> {
+  const fallbacks = ["Sent", "Sent Items", "Sent Messages", "INBOX.Sent"];
+  try {
+    const list = await client.list();
+    for (const box of list) {
+      const flags = box.flags ?? new Set<string>();
+      const specialUse = box.specialUse ?? "";
+      if (flags.has("\\Sent") || specialUse === "\\Sent") {
+        return box.path;
+      }
+    }
+    const paths = new Set(list.map((b) => b.path));
+    for (const fb of fallbacks) {
+      if (paths.has(fb)) return fb;
+    }
+  } catch {
+    /* fall through */
+  }
+  return null;
+}

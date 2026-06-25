@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-06-25
+
+Hardening and ergonomics release. No breaking changes.
+
+### Added
+- **IMAP APPEND to `Sent` folder** after `send_message`, `reply_to_message`,
+  and `forward_message`. Mails sent by an agent now appear in the user's
+  Sent folder as if the user had written them manually, visible in SOGo /
+  Apple Mail / Thunderbird etc. Folder detection uses SPECIAL-USE `\Sent`
+  (RFC 6154) with fallback to common folder names. Best-effort: if APPEND
+  fails, the send result includes `sent_folder_appended: false` but the
+  mail itself was sent successfully. BCC recipients are excluded from
+  the appended copy per RFC 5322.
+- **`X-Sent-By-Host: <hostname>` header** auto-injected on every outbound
+  message. Forensic trace of which fleet machine sent a given mail, even
+  when the From address is a shared persona mailbox used by multiple
+  agents.
+
+### Changed (security — no behavior change for normal use)
+- **No secret in LLM context**: enforced as a non-negotiable rule. The
+  password and API key fields of the config dataclasses are now hidden
+  from `repr()` (Python) and `JSON.stringify()` / `console.log()`
+  (TypeScript, via non-enumerable properties). Direct attribute access
+  (`config.mail_pass`) still works for the IMAP / SMTP helpers.
+- **Sanitized error responses**: all exceptions returned to the LLM via
+  `tools/call` errors pass through `sanitize_text()` / `sanitizeText()`,
+  which masks `password=...`, `token=...`, `api_key=...`, `Bearer <x>`
+  and similar patterns. Full traceback is still logged server-side for
+  debug.
+- **Sanitized audit log**: the `error` field of the JSONL audit log is
+  passed through the same sanitizer before being written to disk.
+
+### Docs
+- `examples/windows-setup.md`: added a section explicitly distinguishing
+  Claude Desktop (`%APPDATA%\Claude\claude_desktop_config.json`) from
+  Claude Code CLI (`%USERPROFILE%\.claude.json`). Feedback from
+  byh-dell1 / Shadow setup.
+
+### Known issues (deferred to v1.0.2)
+- Python tests fail on the 3.10 CI matrix entry (test_admin_tools).
+  Local 3.11 run is clean. Will be fixed when a 3.10 reproduction
+  environment is available.
+- The `references` header in `reply_to_message` (TS) is still
+  Message-ID-only; proper References threading via mailparser is
+  scheduled for v1.1.
+
 ## [1.0.0] - 2026-06-11
 
 First stable release. Five weeks of real-world usage validation since the
