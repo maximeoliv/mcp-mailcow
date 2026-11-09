@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "mcp-mailcow"
 version = "1.0.2"
 description = "Model Context Protocol server for Mailcow — read/send mail and manage your Mailcow server from Claude"
-readme = "../README.md"
+readme = "README.md"
 license = { text = "MIT" }
 authors = [
     { name = "Maxime Olivier", email = "git@maximeolivier.fr" },

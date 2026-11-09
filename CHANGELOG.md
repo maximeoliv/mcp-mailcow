@@ -18,7 +18,8 @@ Bug-fix release. No breaking changes.
   it now uses `ListToolsRequestSchema` and `CallToolRequestSchema`. Tested
   with SDK 1.32.2. Reported by a user running `npx mcp-mailcow --mode user`.
 - Server and package now report the same version string (was `1.0.0`).
-- Python package: version bump only, to keep both packages in sync.
+- Python package: build failed with recent hatchling (`Readme path must be
+  within the project directory`); `py/` now ships its own copy of README.md.
 
 ## [1.0.1] - 2026-06-25
 
