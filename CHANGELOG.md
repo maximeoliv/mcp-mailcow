@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-11-09
+
+Bug-fix release. No breaking changes.
+
+### Fixed
+- **Node: server failed to start with recent `@modelcontextprotocol/sdk`**
+  (`Error: Schema is missing a method literal`). `setRequestHandler` was
+  given plain `{ method: ... }` objects instead of the SDK request schemas;
+  it now uses `ListToolsRequestSchema` and `CallToolRequestSchema`. Tested
+  with SDK 1.32.2. Reported by a user running `npx mcp-mailcow --mode user`.
+- Server and package now report the same version string (was `1.0.0`).
+- Python package: version bump only, to keep both packages in sync.
+
 ## [1.0.1] - 2026-06-25
 
 Hardening and ergonomics release. No breaking changes.

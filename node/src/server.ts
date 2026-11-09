@@ -4,6 +4,7 @@
  */
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { loadSchema, toolsForMode, toMcpTool } from "./schema.js";
 import { loadAdminConfig, loadUserConfig } from "./config.js";
 import { AuditLogger } from "./audit.js";
@@ -33,20 +34,20 @@ export async function runServer(mode: "user" | "admin"): Promise<void> {
   }
 
   const server = new Server(
-    { name: "mcp-mailcow", version: "1.0.0" },
+    { name: "mcp-mailcow", version: "1.0.2" },
     { capabilities: { tools: {} } },
   );
 
   // Tool listing
   server.setRequestHandler(
-    { method: "tools/list" } as never,
+    ListToolsRequestSchema,
     async () => ({ tools: tools.map(toMcpTool) }),
   );
 
   // Tool invocation
   server.setRequestHandler(
-    { method: "tools/call" } as never,
-    async (req: { params: { name: string; arguments?: unknown } }) => {
+    CallToolRequestSchema,
+    async (req) => {
       const { name, arguments: args } = req.params;
       if (!(name in registry)) {
         return {
