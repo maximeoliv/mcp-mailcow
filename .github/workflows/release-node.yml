@@ -8,6 +8,9 @@ on:
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # OIDC for npm trusted publishing (no long-lived token)
     defaults:
       run:
         working-directory: node
@@ -17,8 +20,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           registry-url: "https://registry.npmjs.org"
+
+      - name: Upgrade npm (trusted publishing needs npm >= 11.5.1)
+        run: npm install -g npm@^11.5.1
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
@@ -31,12 +37,14 @@ jobs:
 
       - name: Publish to npm (stable)
         if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-alpha') && !contains(github.ref, '-beta')
-        run: npm publish --access public
+        run: npm publish --access public --provenance
         env:
+          # Fallback only: npm uses the OIDC trusted publisher first when configured on npmjs.com
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish to npm (next tag, for alpha/beta)
         if: contains(github.ref, '-alpha') || contains(github.ref, '-beta')
-        run: npm publish --access public --tag next
+        run: npm publish --access public --provenance --tag next
         env:
+          # Fallback only: npm uses the OIDC trusted publisher first when configured on npmjs.com
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
