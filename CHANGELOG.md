@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-11-09
+
+Bug-fix release. No breaking changes. Fixes [#1](https://github.com/maximeoliv/mcp-mailcow/issues/1).
+
+### Fixed
+- **Python: server failed to start with `mcp` 2.x** (`AttributeError: 'Server'
+  object has no attribute 'list_tools'`). The dependency is now capped to
+  `mcp>=1.0.0,<2` until the server is ported to the 2.x handler API.
+- Python server now reports its own version in `serverInfo` (was the `mcp`
+  library version).
+- (Node fix for the same startup failure shipped in 1.0.2.)
+
+Thanks to @montanasnow for the detailed report and suggested fixes.
+
 ## [1.0.2] - 2026-11-09
 
 Bug-fix release. No breaking changes.

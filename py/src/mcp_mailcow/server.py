@@ -14,6 +14,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from . import __version__
 from .audit import AuditLogger
 from .config import load_admin_config, load_user_config
 from .exceptions import ConfirmationRequired
@@ -42,7 +43,10 @@ async def run_server(mode: str) -> None:
         audit = AuditLogger(config.audit_log)
         registry, ctx = build_admin_registry(config, audit)
 
-    server = Server("mcp-mailcow")
+    try:
+        server = Server("mcp-mailcow", version=__version__)
+    except TypeError:  # very old mcp 1.x without the version argument
+        server = Server("mcp-mailcow")
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:

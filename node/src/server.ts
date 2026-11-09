@@ -34,7 +34,7 @@ export async function runServer(mode: "user" | "admin"): Promise<void> {
   }
 
   const server = new Server(
-    { name: "mcp-mailcow", version: "1.0.2" },
+    { name: "mcp-mailcow", version: "1.0.3" },
     { capabilities: { tools: {} } },
   );
 
